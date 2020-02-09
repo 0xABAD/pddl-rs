@@ -1,7 +1,7 @@
 use std::{error, fmt};
 
 type TokenTypeFn = fn(usize, usize) -> TokenType;
-type TokenResult = Result<Token, TokenError>;
+type ResultToken = Result<Token, TokenError>;
 
 pub struct Tokenizer<'a> {
     source: &'a str,
@@ -22,7 +22,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    pub fn next(&mut self) -> TokenResult {
+    pub fn next(&mut self) -> ResultToken {
         loop {
             let mut next = self.next_char;
 
@@ -77,13 +77,13 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn simple_token(&mut self, t: TokenType, pos: usize) -> TokenResult {
+    fn simple_token(&mut self, t: TokenType, pos: usize) -> ResultToken {
         let col = self.col;
         self.col += 1;
         return Ok(Token::new(t, pos, col, self.line));
     }
 
-    fn time_token(&mut self, pos: usize) -> TokenResult {
+    fn time_token(&mut self, pos: usize) -> ResultToken {
         if let Some((_, c)) = self.chars.next() {
             if c == 't' {
                 let col = self.col;
@@ -99,7 +99,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn number(&mut self, ch: char, start: usize) -> TokenResult {
+    fn number(&mut self, ch: char, start: usize) -> ResultToken {
         let col = self.col;
         let mut end = start;
         let mut dot = 0;
@@ -153,7 +153,7 @@ impl<'a> Tokenizer<'a> {
         pos: usize,
         maybe: char,
         maybe_t: TokenType,
-    ) -> TokenResult {
+    ) -> ResultToken {
         if let Some((p, c)) = self.chars.next() {
             if c == maybe {
                 let result = self.simple_token(maybe_t, pos);
@@ -214,7 +214,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn special(&mut self, ch: char, pos: usize, ttype: TokenTypeFn) -> TokenResult {
+    fn special(&mut self, ch: char, pos: usize, ttype: TokenTypeFn) -> ResultToken {
         let col = self.col;
 
         self.col += 1;
