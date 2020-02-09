@@ -1,0 +1,16 @@
+[package]
+name = "pddl-rs"
+version = "0.1.0"
+authors = ["Dan Abad <dan.r.abad@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[dev-dependencies]
+criterion = "0.3.1"
+
+[[bench]]
+name = "tokenize"
+harness = false
