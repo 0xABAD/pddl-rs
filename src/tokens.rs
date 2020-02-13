@@ -68,11 +68,11 @@ impl<'a> Tokenizer<'a> {
                 } else if ch == '#' {
                     return self.time_token(pos);
                 } else {
-                    let te = TokenInputError::new(ch, pos, self.col, self.line);
+                    let te = TokenInputError::new(ch, pos, self.line, self.col);
                     return Err(TokenError::InvalidInput(te));
                 }
             } else {
-                return Err(TokenError::EndOfInput);
+                return Err(TokenError::EndOfInput(self.line, self.col));
             }
         }
     }
@@ -90,11 +90,11 @@ impl<'a> Tokenizer<'a> {
                 self.col += 2;
                 return Ok(Token::new(TokenType::Time, pos, col, self.line));
             } else {
-                let te = TokenInputError::new('#', pos, self.col, self.line);
+                let te = TokenInputError::new('#', pos, self.line, self.col);
                 return Err(TokenError::InvalidInput(te));
             }
         } else {
-            let te = TokenInputError::new('#', pos, self.col, self.line);
+            let te = TokenInputError::new('#', pos, self.line, self.col);
             return Err(TokenError::InvalidInput(te));
         }
     }
@@ -123,7 +123,7 @@ impl<'a> Tokenizer<'a> {
                     self.col += 1;
                     dot += 1;
                     if dot > 1 {
-                        let te = TokenInputError::new('.', p, self.col - 1, self.line);
+                        let te = TokenInputError::new('.', p, self.line, self.col - 1);
                         return Err(TokenError::InvalidInput(te));
                     }
                 } else {
@@ -137,14 +137,21 @@ impl<'a> Tokenizer<'a> {
         }
 
         if dot == 1 && last == '.' {
-            let te = TokenInputError::new('.', end, self.col - 1, self.line);
+            let te = TokenInputError::new('.', end, self.line, self.col - 1);
             return Err(TokenError::InvalidInput(te));
         }
 
-        let s = &self.source[start..(end + 1)];
+        end += 1;
+
+        let s = &self.source[start..end];
         let n: f64 = s.parse().unwrap();
 
-        return Ok(Token::new(TokenType::Number(n), start, col, self.line));
+        return Ok(Token::new(
+            TokenType::Number(n, start, end),
+            start,
+            col,
+            self.line,
+        ));
     }
 
     fn maybe(
@@ -232,11 +239,11 @@ impl<'a> Tokenizer<'a> {
                     ),
                 }
             } else {
-                let te = TokenInputError::new(ch, pos, col, self.line);
+                let te = TokenInputError::new(ch, pos, self.line, col);
                 return Err(TokenError::InvalidInput(te));
             }
         } else {
-            let te = TokenInputError::new(ch, pos, col, self.line);
+            let te = TokenInputError::new(ch, pos, self.line, col);
             return Err(TokenError::InvalidInput(te));
         }
     }
@@ -261,7 +268,7 @@ impl Token {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TokenType {
     LParen,
     RParen,
@@ -278,12 +285,35 @@ pub enum TokenType {
     Ident(usize, usize),
     Variable(usize, usize),
     Keyword(usize, usize),
-    Number(f64),
+    Number(f64, usize, usize),
+}
+
+impl<'a> TokenType {
+    pub fn to_string(self, contents: &'a str) -> &'a str {
+        match self {
+            TokenType::LParen => "(",
+            TokenType::RParen => ")",
+            TokenType::Plus => "+",
+            TokenType::Mult => "*",
+            TokenType::Div => "/",
+            TokenType::Minus => "-",
+            TokenType::Equal => "=",
+            TokenType::Less => "<",
+            TokenType::LessEq => "<=",
+            TokenType::Greater => ">",
+            TokenType::GreaterEq => ">=",
+            TokenType::Time => "#t",
+            TokenType::Ident(s, e) => &contents[s..e],
+            TokenType::Variable(s, e) => &contents[s..e],
+            TokenType::Keyword(s, e) => &contents[s..e],
+            TokenType::Number(_, s, e) => &contents[s..e],
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
 pub enum TokenError {
-    EndOfInput,
+    EndOfInput(usize, usize),
     InvalidInput(TokenInputError),
 }
 
@@ -296,7 +326,7 @@ pub struct TokenInputError {
 }
 
 impl TokenInputError {
-    pub fn new(what: char, pos: usize, col: usize, line: usize) -> TokenInputError {
+    pub fn new(what: char, pos: usize, line: usize, col: usize) -> TokenInputError {
         TokenInputError {
             what,
             pos,
@@ -315,7 +345,7 @@ impl error::Error for TokenError {
 impl fmt::Display for TokenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenError::EndOfInput => write!(f, "token error"),
+            TokenError::EndOfInput(line, col) => write!(f, "{}:{}: end of input found", line, col),
             TokenError::InvalidInput(e) => {
                 write!(f, "{}:{} -- invalid input '{}'", e.line, e.col, e.what)
             }
@@ -572,16 +602,18 @@ bar";
         let mut tz = Tokenizer::new(TEST_STRING);
 
         let t = tz.next()?;
-        assert_eq!(t.what, TokenType::Number(42.0));
+        assert_eq!(t.what, TokenType::Number(42.0, 0, 2));
         assert_eq!(t.pos, 0, "invalid position");
         assert_eq!(t.col, 1, "invalid column");
         assert_eq!(t.line, 1, "invalid line");
+        assert_eq!(&TEST_STRING[0..2], "42");
 
         let t = tz.next()?;
-        assert_eq!(t.what, TokenType::Number(13.25));
+        assert_eq!(t.what, TokenType::Number(13.25, 3, 8));
         assert_eq!(t.pos, 3, "invalid position");
         assert_eq!(t.col, 4, "invalid column");
         assert_eq!(t.line, 1, "invalid line");
+        assert_eq!(&TEST_STRING[3..8], "13.25");
 
         let t = tz.next()?;
         assert_eq!(t.what, TokenType::Ident(8, 11));
@@ -590,10 +622,11 @@ bar";
         assert_eq!(t.line, 1, "invalid line");
 
         let t = tz.next()?;
-        assert_eq!(t.what, TokenType::Number(12.0));
+        assert_eq!(t.what, TokenType::Number(12.0, 12, 16));
         assert_eq!(t.pos, 12, "invalid position");
         assert_eq!(t.col, 13, "invalid column");
         assert_eq!(t.line, 1, "invalid line");
+        assert_eq!(&TEST_STRING[12..16], "0012");
 
         Ok(())
     }
