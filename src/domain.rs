@@ -2,12 +2,19 @@ use std::{error, fmt};
 
 use crate::tokens::{Token, TokenError, TokenType, Tokenizer};
 
+/// `Domain` represents the final output from parsing the contents
+/// representing some PDDL domain.
 pub struct Domain<'a> {
+    /// The parsed domain name.
     pub name: &'a str,
-    reqs: u32,
+
+    reqs: u32, // Parsed requirements as a bit vector.
 }
 
 impl<'a> Domain<'a> {
+    /// `is_domain` return true if `contents` represents a PDDL domain.
+    /// Only the first few tokens of `cotents` is paresed to make this
+    /// determination.
     pub fn is_domain(contents: &str) -> bool {
         let mut dp = DomainParser::new(contents);
         dp.consume(TokenType::LParen)
@@ -17,6 +24,9 @@ impl<'a> Domain<'a> {
             .is_ok()
     }
 
+    /// `parse` returns a complete domain represented by the PDDL domain
+    /// within `contents.`  Returns a `ParseError` if any syntax or semantic
+    /// error is encountered.
     pub fn parse(contents: &str) -> Result<Domain, ParseError> {
         let mut dp = DomainParser::new(contents);
         dp.top_level().map(|pr| Domain {
@@ -25,6 +35,8 @@ impl<'a> Domain<'a> {
         })
     }
 
+    /// `has_requirement` returns true if this `Domain` has the requirement
+    /// of `r`.
     pub fn has_requirement(&self, r: Requirement) -> bool {
         let b = self.reqs & (1 << r.index());
         if r == Requirement::Strips {
@@ -34,6 +46,8 @@ impl<'a> Domain<'a> {
     }
 }
 
+/// `Requirement` represents one of the allowed requirement specifications
+/// that may be within a PDDL domain.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Requirement {
     Strips,
@@ -59,6 +73,7 @@ pub enum Requirement {
     ActionCosts,
 }
 
+/// String forms of `Requirement`.  Note that there positions must match.
 const REQUIREMENTS: [&'static str; 21] = [
     ":strips",
     ":typing",
@@ -84,7 +99,9 @@ const REQUIREMENTS: [&'static str; 21] = [
 ];
 
 impl Requirement {
-    fn index(self) -> usize {
+    /// `index` returns index of the `Requirement` to get the string form
+    /// from the `REQUIREMENTS` array.
+    pub fn index(self) -> usize {
         match self {
             Requirement::Strips => 0,
             Requirement::Typing => 1,
@@ -110,7 +127,18 @@ impl Requirement {
         }
     }
 
-    fn from_index(index: usize) -> Requirement {
+    /// `from_index` is the dual of `Requirement::index` function.  Panics
+    /// if index is out of bounds.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pddl_rs::domain::Requirement;
+    /// let p = Requirement::Preferences;
+    /// let i = p.index();
+    /// assert_eq!(p, Requirement::from_index(i));
+    /// ```
+    pub fn from_index(index: usize) -> Requirement {
         match index {
             0 => Requirement::Strips,
             1 => Requirement::Typing,
@@ -138,6 +166,9 @@ impl Requirement {
     }
 }
 
+/// `expect!` provides a concise way of returning a `ParseError` from
+/// a given `Token` and arbitrary number of arguments that represent the
+/// expected tokens.
 macro_rules! expect {
     ($dp:tt, $tok:tt, $($arg:tt)*) => {
         {
@@ -148,6 +179,9 @@ macro_rules! expect {
     }
 }
 
+/// `token_error!` provides a concise way of returning a `ParseError` from
+/// a given `TokenError` and arbitrary number of arguments that represent
+/// the expected tokens.
 macro_rules! token_error {
     ($dp:tt, $err:tt, $($arg:tt)*) => {
         {
@@ -157,6 +191,8 @@ macro_rules! token_error {
     }
 }
 
+/// `DomainParser` maintains the state necessary to parse a portion of
+/// of a PDDL domain.
 struct DomainParser<'a> {
     contents: &'a str,
     tokenizer: Tokenizer<'a>,
@@ -164,18 +200,29 @@ struct DomainParser<'a> {
 }
 
 impl<'a> DomainParser<'a> {
-    fn new(s: &'a str) -> DomainParser<'a> {
+    /// Creates a new `DomainParser` where `source` entails the entire
+    /// PDDL domain to be parsed.
+    fn new(source: &'a str) -> DomainParser<'a> {
         return DomainParser {
-            contents: s,
-            tokenizer: Tokenizer::new(s),
+            contents: source,
+            tokenizer: Tokenizer::new(source),
             last_token: None,
         };
     }
 
+    /// `token_str` returns the string form of the `Token`, `t`.
     fn token_str(&self, t: &Token) -> &'a str {
         t.what.to_string(self.contents)
     }
 
+    /// `top_level` parses the top level forms of a PDDL domain.
+    ///
+    /// While the entire contents of the `DomainParser` are scanned only the
+    /// `:requirements` and `:typing` section of the domain, if they exist,
+    /// are parsed.  All other constructs are partially scanned to just
+    /// determine their starting location within the contents of the
+    /// `DomainParser` and that they form a balance construct (i.e. have
+    /// balanced parenthesis.
     fn top_level(&mut self) -> Result<ParseResult<'a>, ParseError<'a>> {
         self.consume(TokenType::LParen)?;
         self.specific_ident("define")?;
@@ -299,6 +346,9 @@ impl<'a> DomainParser<'a> {
         }
     }
 
+    /// `next_token` consumes the last token of the `DomainParser` if
+    /// it exists; otherwise, it calls the tokenizer to return the next
+    /// `Token`.
     fn next_token(&mut self) -> Result<Token, TokenError> {
         if let Some(t) = self.last_token {
             self.last_token = None;
@@ -308,10 +358,17 @@ impl<'a> DomainParser<'a> {
         }
     }
 
+    /// `expect_next` is like `next_token` but transforms the `TokenError`
+    /// into a `ParseError` if such an error is returned.  The transformed
+    /// error uses `what` as the expected next token.
     fn expect_next(&mut self, what: &'a str) -> Result<Token, ParseError<'a>> {
         self.next_token().or_else(|e| token_error!(self, e, what))
     }
 
+    /// `next_token_is` returns true if the last token received from the
+    /// tokenizer has a `TokenType` that is equal to `what`.  If the is not
+    /// the case or there is no last token (i.e. it has already been
+    /// consumed) then false is returned.
     fn next_token_is(&mut self, what: TokenType) -> bool {
         if let Some(t) = self.last_token {
             if t.what == what {
@@ -322,6 +379,9 @@ impl<'a> DomainParser<'a> {
         false
     }
 
+    /// `next_keyword_is` is like `next_token_is` but only applies if the
+    /// previous unconsumed token is a `TokenType::Keyword` and its string
+    /// form is case insensitive equal to `keyword`.
     fn next_keyword_is(&mut self, keyword: &str) -> bool {
         if let Some(t) = self.last_token {
             if let TokenType::Keyword(_, _) = t.what {
@@ -335,6 +395,10 @@ impl<'a> DomainParser<'a> {
         false
     }
 
+    /// `specific_ident` consumes and returns the next token that is an
+    /// identifier whose string form is case insensitive equal to `what`.
+    /// If that is not the case then a `ParseError` is returned that expects
+    /// `what`.
     fn specific_ident(&mut self, what: &'a str) -> Result<Token, ParseError<'a>> {
         self.expect_next(what).and_then(|tok| {
             if let TokenType::Ident(s, e) = tok.what {
@@ -350,6 +414,9 @@ impl<'a> DomainParser<'a> {
         })
     }
 
+    /// `consume` consumes and returns the next token whose `TokenType` is
+    /// is equal to `what`. If that is not the case then a `ParseError` is
+    /// returned that expects `what`.
     fn consume(&mut self, what: TokenType) -> Result<Token, ParseError<'a>> {
         self.expect_next(what.to_string(self.contents))
             .and_then(|tok| {
@@ -361,6 +428,8 @@ impl<'a> DomainParser<'a> {
             })
     }
 
+    /// `consume_ident` consumes the next token that nneds to be an
+    /// identifier and returns the string form of that identifier.
     fn consume_ident(&mut self) -> Result<&'a str, ParseError<'a>> {
         self.expect_next("identifier").and_then(|tok| {
             if let TokenType::Ident(_, _) = tok.what {
@@ -371,6 +440,10 @@ impl<'a> DomainParser<'a> {
         })
     }
 
+    /// `check_next_token_is_one_of` checks to see if the next token is
+    /// one of `ttypes`.  Note this does not consume the checked token as
+    /// further decisions may be made depending on the value of the next
+    /// token.
     fn check_next_token_is_one_of(&mut self, ttypes: &[TokenType]) -> Result<(), ParseError<'a>> {
         let tok: Token;
 
@@ -401,6 +474,12 @@ impl<'a> DomainParser<'a> {
         Err(ParseError::expect(tok.line, tok.col, s, v))
     }
 
+    /// `check_next_is_one_of` is like `check_next_token_is_one_of` but
+    /// checks if the string form of the next token is a case insensitive
+    /// match to any of the elements of `words`.  Note, that like
+    /// `check_next_token_is_one_of` this method does not consume the
+    /// the next token.  The Ok result returned is the index of the match
+    /// into the `words` slice.
     fn check_next_is_one_of(&mut self, words: &[&'a str]) -> Result<usize, ParseError<'a>> {
         let tok: Token;
 
@@ -433,12 +512,21 @@ impl<'a> DomainParser<'a> {
         Err(ParseError::expect(tok.line, tok.col, s, v))
     }
 
+    /// `next_is_one_of` is exactly like `check_next_is_one_of` but
+    /// also consumes the token.
     fn next_is_one_of(&mut self, words: &[&'a str]) -> Result<usize, ParseError<'a>> {
         let idx = self.check_next_is_one_of(words)?;
         self.last_token = None;
         Ok(idx)
     }
 
+    /// `parse_requirements` parses the `:requirements` section of the
+    /// PDDL domain and returns a bit vector where each bit position
+    /// represents the requirement that is recognized.  The bit position
+    /// for a requirement is the `Requirement::index` value.  Note,
+    /// that a requirement that implies others (e.g. `:adl` implies
+    /// `:strips`, `:typing`, and others) is expanded and also to the
+    /// requirements bit vector.
     fn parse_requirements(&mut self) -> Result<u32, ParseError<'a>> {
         // Parse the first requirement where it is expected to be at
         // least one requriement.
@@ -463,6 +551,8 @@ impl<'a> DomainParser<'a> {
         }
     }
 
+    /// `add_requirement` adds the `req_index` to the `existing` requirements
+    /// bit vector while also expanding implied requirements of `req_index`.
     fn add_requirement(&self, existing: u32, req_index: usize) -> u32 {
         let mut reqs = existing | (1 << req_index);
         let req = Requirement::from_index(req_index);
@@ -491,30 +581,43 @@ impl<'a> DomainParser<'a> {
     }
 }
 
+/// `ParseResult` encompasses a result returned from of the different
+/// methods of a `DomainParser`.
 #[derive(Debug)]
 struct ParseResult<'a> {
-    name: &'a str,
-    reqs: u32,
+    name: &'a str, // Name of a domain.
+    reqs: u32,     // Requirements of the domain represented as bit vector.
 }
 
 impl<'a> ParseResult<'a> {
+    /// `with_name` returns a ParseResult that has a name of `name`.  All
+    /// other fields have their zero value.
     fn with_name(name: &'a str) -> ParseResult<'a> {
         ParseResult { name, reqs: 0 }
     }
 
+    /// `add_requirements` adds the requirements of the `reqs` bit vector
+    /// to the requirements contained within the `ParseResult`.
     fn add_requirements(&mut self, reqs: u32) {
         self.reqs = self.reqs | reqs
     }
 }
 
+/// `ParseError` is the error returned from parsing a PDDL domain.
 #[derive(Debug, PartialEq)]
 pub struct ParseError<'a> {
+    /// The specific parse error that occurred.
     pub what: ParseErrorType<'a>,
+    /// The line number the error occurred on.
     pub line: usize,
+    /// The column number the error occurred on.
     pub col: usize,
 }
 
 impl<'a> ParseError<'a> {
+    /// `expect` returns a `ParseError` for an error that occurred
+    /// on line, `line`, column, `col`, and has a value of `have` where
+    /// `expecting` are the expected values at the time of parse.
     fn expect(line: usize, col: usize, have: &'a str, expecting: Vec<&'a str>) -> ParseError<'a> {
         let et = ExpectToken {
             have,
@@ -527,6 +630,9 @@ impl<'a> ParseError<'a> {
         }
     }
 
+    /// `from_token_error` converts a `TokenError` into a `ParseError`.  `contents`
+    /// are the original source contents of the `DomainParser` and `expecting` is
+    /// are the values that were expected at the time of the parse.
     fn from_token_error(
         e: TokenError,
         contents: &'a str,
@@ -556,9 +662,13 @@ impl<'a> fmt::Display for ParseError<'a> {
     }
 }
 
+/// `ParseErrorType` are the different type of `ParseError`s that
+/// can occur during parsing a PDDL domain.
 #[derive(Debug, PartialEq)]
 pub enum ParseErrorType<'a> {
+    /// Where the parser expected a specific token but received something else.
     Expect(ExpectToken<'a>),
+    /// Signals that extra input was detected at the end of the PDDL domain.
     ExtraInput(&'a str),
 }
 
@@ -571,6 +681,8 @@ impl<'a> fmt::Display for ParseErrorType<'a> {
     }
 }
 
+/// `ExpectToken` contains the information necessary to describe a
+/// `ParseErrorType::Expect` error.
 #[derive(Debug, PartialEq)]
 pub struct ExpectToken<'a> {
     pub have: &'a str,
