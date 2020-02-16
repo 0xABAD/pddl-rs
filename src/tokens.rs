@@ -334,6 +334,12 @@ impl TokenInputError {
             line,
         }
     }
+
+    pub fn to_string<'a>(&self, contents: &'a str) -> &'a str {
+        let p = self.pos;
+        let n = self.what.len_utf8();
+        &contents[p..p + n]
+    }
 }
 
 impl error::Error for TokenError {
