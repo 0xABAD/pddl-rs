@@ -3,25 +3,57 @@ use std::{error, fmt};
 type TokenTypeFn = fn(usize, usize) -> TokenType;
 type ResultToken = Result<Token, TokenError>;
 
+/// Tokenizer that recognizes PDDL tokens.
+///
+/// Tokenizer works off some source contents and the returned tokens refer
+/// to positions within that source.  This means that no strings are created
+/// or copied -- everything is based off the positions of the Tokenizer's
+/// source.
+///
+/// Legal tokens are derived from the PDDL 3.1 specification found from
+/// (here)[http://www.plg.inf.uc3m.es/ipc2011-deterministic/attachments/OtherContributions/kovacs-pddl-3.1-2011.pdf].
+/// Since that document does not precisely specify lexical conventions this
+/// tokenizer only accepts ASCII characters to form valid tokens.  Comments,
+/// however, may contain any valid UTF-8 text as those lexemes are ignored by
+/// the tokenizer.
 pub struct Tokenizer<'a> {
-    source: &'a str,
-    next_char: Option<(usize, char)>,
-    chars: std::str::CharIndices<'a>,
-    col: usize,
-    line: usize,
+    source: &'a str,                  // Source content to extract tokens from.
+    next_char: Option<(usize, char)>, // Next character extracted from source but not yet consumed.
+    chars: std::str::CharIndices<'a>, // Iterator over source.
+    col: usize,                       // Current column tokenized within source.
+    line: usize,                      // Current line tokenized within source.
 }
 
 impl<'a> Tokenizer<'a> {
-    pub fn new(s: &'a str) -> Tokenizer<'a> {
+    /// New returns a Tokenizer that scans source for tokens.  The column and
+    /// line number of the Tokenizer both begin at one.
+    pub fn new(source: &'a str) -> Tokenizer<'a> {
         Tokenizer {
-            source: s,
+            source,
             next_char: None,
-            chars: s.char_indices(),
+            chars: source.char_indices(),
             col: 1,
             line: 1,
         }
     }
 
+    /// With_offset returns a Tokenizer that scans source.  Tokens returned will be
+    /// based off the positions of the column and line.  This allows creating
+    /// a specific Tokenizer that begins at some offset of the full source
+    /// contents but stil report the correct column and line numbers of scanned
+    /// tokens.
+    pub fn with_offset(source: &'a str, column: usize, line: usize) -> Tokenizer<'a> {
+        Tokenizer {
+            source,
+            next_char: None,
+            chars: source.char_indices(),
+            col: column,
+            line,
+        }
+    }
+
+    /// Next returns the next scanned token from its source input.  Returns a TokenError
+    /// if the scanned input is not recognized as a valid PDDL token.
     pub fn next(&mut self) -> ResultToken {
         loop {
             let mut next = self.next_char;
@@ -77,12 +109,16 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    /// Simple_token simply returns a Token whose TokenType is t while also
+    /// incrementing the column number of the Tokenizer.
     fn simple_token(&mut self, t: TokenType, pos: usize) -> ResultToken {
         let col = self.col;
         self.col += 1;
         return Ok(Token::new(t, pos, col, self.line));
     }
 
+    /// Time_token attempts to return the token representation of a PDDL time
+    /// construct (i.e. "#t").
     fn time_token(&mut self, pos: usize) -> ResultToken {
         if let Some((_, c)) = self.chars.next() {
             if c == 't' {
@@ -99,6 +135,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    /// Number attempts to return the token representation of a PDDL number.
     fn number(&mut self, ch: char, start: usize) -> ResultToken {
         let col = self.col;
         let mut end = start;
@@ -154,15 +191,19 @@ impl<'a> Tokenizer<'a> {
         ));
     }
 
+    /// Maybe attempts to return the token with the TokenType of `maybe_t`
+    /// if and only if the next scanned character in the input is equal to
+    /// to `maybe_c`.  If that doesn't hold the next scanned character is
+    /// not consumed and the Token with the TokenType of `tok` is returned.
     fn maybe(
         &mut self,
         tok: TokenType,
         pos: usize,
-        maybe: char,
+        maybe_c: char,
         maybe_t: TokenType,
     ) -> ResultToken {
         if let Some((p, c)) = self.chars.next() {
-            if c == maybe {
+            if c == maybe_c {
                 let result = self.simple_token(maybe_t, pos);
                 self.col += 1;
                 return result;
@@ -175,6 +216,8 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    /// Comment continues scanning until a newline (i.e. "\n") is encountered,
+    /// which is not consumed by the scanner.
     fn comment(&mut self) {
         self.col += 1;
         loop {
@@ -191,6 +234,9 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    /// Ident returns a Token that represents a legal PDDL identifier, which is
+    /// text that begins with a letter (i.e. 'a..z' or 'A..Z') is followed by
+    /// zero or more letters, digits, '-', or '_' characters.
     fn ident(&mut self, first_pos: usize, first_char: char) -> Token {
         let mut last_pos = first_pos;
         let mut last_char = first_char;
@@ -221,6 +267,12 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    /// Special is like `Tokenizer::ident` but the Token returned has a
+    /// TokenType that is the result of calling `ttype` with the start
+    /// and end positions of the token.  Since the character that forms
+    /// the special TokenType has already been consumed then it is possible
+    /// to return a TokenError if the next character does not begin a
+    /// valid identifier.
     fn special(&mut self, ch: char, pos: usize, ttype: TokenTypeFn) -> ResultToken {
         let col = self.col;
 
@@ -249,15 +301,21 @@ impl<'a> Tokenizer<'a> {
     }
 }
 
+/// Token is primary object that is returned from calling `Tokenizer::next`.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Token {
+    /// What type of token this one is.
     pub what: TokenType,
+    /// Position of where the token was found from Tokenizer's source contents.
     pub pos: usize,
+    /// Column number of where the token was found.
     pub col: usize,
+    /// Line number of where the token was found.
     pub line: usize,
 }
 
 impl Token {
+    /// New returns a new Token.
     pub fn new(what: TokenType, pos: usize, col: usize, line: usize) -> Token {
         Token {
             what,
@@ -268,6 +326,7 @@ impl Token {
     }
 }
 
+/// TokenType specifies what kind of token was scanned.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TokenType {
     LParen,
@@ -282,13 +341,29 @@ pub enum TokenType {
     Greater,
     GreaterEq,
     Time,
+    /// First parameter is the start position from the source while the
+    /// second is the position from the source immediately after last
+    /// character of the scanned identifier.
     Ident(usize, usize),
+    /// First parameter is the start position from the source while the
+    /// second is the position from the source immediately after last
+    /// character of the scanned variable.
     Variable(usize, usize),
+    /// First parameter is the start position from the source while the
+    /// second is the position from the source immediately after last
+    /// character of the scanned keyword.
     Keyword(usize, usize),
+    /// The first parameter is final parsed number.  The second parameter is
+    /// the start position from the source while the third is the position
+    /// from the source immediately after last character of the scanned
+    /// number.
     Number(f64, usize, usize),
 }
 
 impl<'a> TokenType {
+    /// To_string returns the string representation of the scanned
+    /// TokenType.  `contents` should be the exact source contents
+    /// that was passed to the `Tokenizer` on its construction.
     pub fn to_string(self, contents: &'a str) -> &'a str {
         match self {
             TokenType::LParen => "(",
@@ -311,17 +386,31 @@ impl<'a> TokenType {
     }
 }
 
+/// TokenError is the error type returned when the Tokenizer
+/// does not recognize the next scanned character from the
+/// source or the end of input has been reached.
 #[derive(Debug, PartialEq)]
 pub enum TokenError {
+    /// EndOfInput is not necessarily an error despite being returned as
+    /// one.  The first parameter is line number and the second is the
+    /// column number of when the end of input was found.
     EndOfInput(usize, usize),
+    /// InvalidInput represents a scanned character that was not
+    /// recognized by the Tokenizer.  The TokenInputError contains
+    /// all information of the invalid scanned input.
     InvalidInput(TokenInputError),
 }
 
+/// TokenInputError provides the specifics for a `TokenError::InvalidInput`.
 #[derive(Debug, PartialEq)]
 pub struct TokenInputError {
+    /// Character scanned that caused the error.
     pub what: char,
+    /// The position within the `Tokenizer`s source of where `what` was scanned.
     pub pos: usize,
+    /// Column number of where the error occurred.
     pub col: usize,
+    /// Line number of where the error occurred.
     pub line: usize,
 }
 
@@ -335,6 +424,9 @@ impl TokenInputError {
         }
     }
 
+    /// To_string returns the string form of the scanned character from
+    /// the `TokenInputError`.  `contents` should be the exact source that
+    /// was passed into the construction of `Tokenizer`.
     pub fn to_string<'a>(&self, contents: &'a str) -> &'a str {
         let p = self.pos;
         let n = self.what.len_utf8();
