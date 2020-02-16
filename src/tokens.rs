@@ -249,7 +249,7 @@ impl<'a> Tokenizer<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Token {
     pub what: TokenType,
     pub pos: usize,
