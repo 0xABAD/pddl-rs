@@ -360,7 +360,7 @@ impl fmt::Display for TokenError {
 }
 
 #[cfg(test)]
-mod token_tests {
+mod test {
     use super::*;
 
     #[test]
