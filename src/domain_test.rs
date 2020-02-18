@@ -70,7 +70,7 @@ fn invalid_top_level_keyword() {
                     ":functions",
                     ":predicates",
                     ":constants",
-                    ":typing",
+                    ":types",
                     ":requirements",
                 ]
             ),
@@ -199,7 +199,7 @@ fn parse_requirements_fails_with_invalid_requirement() {
                 let mut v = REQUIREMENTS.to_vec();
                 v.push(")");
                 assert_eq!(et.expect, v)
-            },
+            }
             _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
         }
     } else {
@@ -217,10 +217,105 @@ fn parse_requirements_fails_with_invalid_token() {
                 let mut v = REQUIREMENTS.to_vec();
                 v.push(")");
                 assert_eq!(et.expect, v)
-            },
+            }
             _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
         }
     } else {
         panic!("Expected error but received successful domain parse");
     }
 }
+
+#[test]
+fn can_parse_types() -> Result<(), ParseError<'static>> {
+    let d = Domain::parse("(define (domain foo)
+                             (:requirements :strips :typing)
+                             (:types car truck motorcycle - vehicle
+                                     bicycle - object
+                                     moped - (either motorcycle bicycle)))")?;
+
+    assert_eq!(d.id_for_type("object"), Some(&0));
+    assert_eq!(d.id_for_type("car"), Some(&1));
+    assert_eq!(d.id_for_type("truck"), Some(&2));
+    assert_eq!(d.id_for_type("motorcycle"), Some(&3));
+    assert_eq!(d.id_for_type("vehicle"), Some(&4));
+    assert_eq!(d.id_for_type("bicycle"), Some(&5));
+    assert_eq!(d.id_for_type("moped"), Some(&6));
+
+    let veh: HashSet<_> = [4].iter().cloned().collect();
+    assert!(d.parent_type_ids(1).is_subset(&veh));
+    assert!(d.parent_type_ids(1).is_superset(&veh));
+
+    assert!(d.parent_type_ids(2).is_subset(&veh));
+    assert!(d.parent_type_ids(2).is_superset(&veh));
+
+    assert!(d.parent_type_ids(3).is_subset(&veh));
+    assert!(d.parent_type_ids(3).is_superset(&veh));
+
+    assert!(d.parent_type_ids(4).is_empty());
+
+    let obj: HashSet<_> = [0].iter().cloned().collect();
+    assert!(d.parent_type_ids(5).is_subset(&obj));
+    assert!(d.parent_type_ids(5).is_superset(&obj));
+
+    let many: HashSet<_> = [3, 5].iter().cloned().collect();
+    assert!(d.parent_type_ids(6).is_subset(&many));
+    assert!(d.parent_type_ids(6).is_superset(&many));
+
+    Ok(())
+}
+
+#[test]
+fn has_default_object() -> Result<(), ParseError<'static>> {
+    let d = Domain::parse("(define (domain foo)
+                             (:requirements :strips :typing)
+                             (:types))")?;
+    assert_eq!(d.id_for_type("object"), Some(&0));
+    Ok(())
+}
+
+#[test]
+fn object_can_not_be_a_new_type() {
+    let d = Domain::parse("(define (domain foo)
+                             (:requirements :strips :typing)
+                             (:types object))");
+    if let Ok(_) = d {
+        panic!("Received successful parse when error should have occurred.");
+    }
+}
+
+#[test]
+fn object_can_not_be_a_new_type_2() {
+    let d = Domain::parse("(define (domain foo)
+                             (:requirements :strips :typing)
+                             (:types car object))");
+    if let Ok(_) = d {
+        panic!("Received successful parse when error should have occurred.");
+    }
+}
+
+#[test]
+fn circular_inheritance_causes_error() {
+    let d = Domain::parse("(define (domain foo)
+                             (:requirements :strips :typing)
+                             (:types shape - object
+                                     square - (either rectangle shape)
+                                     rectangle - square))");
+    // Circular inheritance from single parent.
+    if let Ok(_) = d {
+        panic!("Received successful parse when error should have occurred.");
+    }
+}
+
+#[test]
+fn circular_inheritance_causes_error_2() {
+    let d = Domain::parse("(define (domain foo)
+                             (:requirements :strips :typing)
+                             (:types shape - rectangle
+                                     square - shape
+                                     rectangle - (either square box)))");
+    // Circular inheritance from either type.
+    if let Ok(_) = d {
+        panic!("Received successful parse when error should have occurred.");
+    }
+}
+

@@ -1,6 +1,9 @@
+use std::collections::{HashMap, HashSet};
 use std::{error, fmt};
 
 use crate::tokens::{Token, TokenError, TokenType, Tokenizer};
+
+type TypeId = usize;
 
 /// `Domain` represents the final output from parsing the contents
 /// representing some PDDL domain.
@@ -8,7 +11,8 @@ pub struct Domain<'a> {
     /// The parsed domain name.
     pub name: &'a str,
 
-    reqs: u32, // Parsed requirements as a bit vector.
+    reqs: u32,          // Parsed (:requirements) as a bit vector.
+    types: ParsedTypes, // Parsed (:types).
 }
 
 impl<'a> Domain<'a> {
@@ -32,6 +36,7 @@ impl<'a> Domain<'a> {
         dp.top_level().map(|pr| Domain {
             name: pr.name,
             reqs: pr.reqs,
+            types: pr.types,
         })
     }
 
@@ -43,6 +48,18 @@ impl<'a> Domain<'a> {
             return self.reqs == 0 || b > 0;
         }
         b > 0
+    }
+
+    /// `id_for_type` possibly returns the `TypeId` for the string `t`.
+    pub fn id_for_type(&self, t: &str) -> Option<&TypeId> {
+        let k = t.to_ascii_lowercase();
+        self.types.types.get(&k)
+    }
+
+    /// `parent_type_ids` retuns the immediate parent TypeID set for `id`.
+    /// Note that this doesn't include any grandparent Ids, etc.
+    pub fn parent_type_ids(&self, id: TypeId) -> &HashSet<TypeId> {
+        &self.types.parent_types[id]
     }
 }
 
@@ -166,6 +183,12 @@ impl Requirement {
     }
 }
 
+impl fmt::Display for Requirement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", REQUIREMENTS[self.index()])
+    }
+}
+
 /// `expect!` provides a concise way of returning a `ParseError` from
 /// a given `Token` and arbitrary number of arguments that represent the
 /// expected tokens.
@@ -191,12 +214,23 @@ macro_rules! token_error {
     }
 }
 
+/// `next_token!` calls the `next_token` method from `$dp` but converts
+/// `TokenError`, if it occurs, to a `ParseError`..
+macro_rules! next_token {
+    ($dp:tt, $($arg:tt)*) => {
+        $dp.next_token().or_else(|te| {
+            let v = vec![$($arg)*];
+            (Err(ParseError::from_token_error(te, $dp.contents, v)))
+        });
+    };
+}
+
 /// `DomainParser` maintains the state necessary to parse a portion of
 /// of a PDDL domain.
 struct DomainParser<'a> {
-    contents: &'a str,
-    tokenizer: Tokenizer<'a>,
-    last_token: Option<Token>,
+    contents: &'a str,         // Source contents that will be parsed.
+    tokenizer: Tokenizer<'a>,  // Scans contents.
+    last_token: Option<Token>, // Last scanned token that hasn't been consumed.
 }
 
 impl<'a> DomainParser<'a> {
@@ -241,7 +275,7 @@ impl<'a> DomainParser<'a> {
             ":functions",
             ":predicates",
             ":constants",
-            ":typing",
+            ":types",
             ":requirements",
         ];
 
@@ -262,8 +296,12 @@ impl<'a> DomainParser<'a> {
 
             if top_keys.len() == 8 {
                 top_keys = &top_keys[0..7];
-                if self.next_keyword_is(TOP_LEVEL_KEYWORDS[7]) {
-                    // TODO: PARSE TYPES
+                if let Some(t) = self.with_last_keyword(TOP_LEVEL_KEYWORDS[7]) {
+                    if !result.has_requirement(Requirement::Typing) {
+                        let e = ParseError::missing(t.line, t.col, Requirement::Typing, ":types");
+                        return Err(e);
+                    }
+                    result.types = self.parse_types()?;
                     self.check_next_token_is_one_of(&PARENS)?;
                     continue;
                 }
@@ -395,6 +433,22 @@ impl<'a> DomainParser<'a> {
         false
     }
 
+    /// `with_last_keyword` returns the last token that wasn't consumed
+    /// if it is case insensitive equal to `keyword`.  Note, this consumes
+    /// the last token if there is one.
+    fn with_last_keyword(&mut self, keyword: &str) -> Option<Token> {
+        if let Some(t) = self.last_token {
+            if let TokenType::Keyword(_, _) = t.what {
+                let s = self.token_str(&t);
+                if s.eq_ignore_ascii_case(keyword) {
+                    self.last_token = None;
+                    return Some(t);
+                }
+            }
+        }
+        None
+    }
+
     /// `specific_ident` consumes and returns the next token that is an
     /// identifier whose string form is case insensitive equal to `what`.
     /// If that is not the case then a `ParseError` is returned that expects
@@ -428,7 +482,7 @@ impl<'a> DomainParser<'a> {
             })
     }
 
-    /// `consume_ident` consumes the next token that nneds to be an
+    /// `consume_ident` consumes the next token that needs to be an
     /// identifier and returns the string form of that identifier.
     fn consume_ident(&mut self) -> Result<&'a str, ParseError<'a>> {
         self.expect_next("identifier").and_then(|tok| {
@@ -579,27 +633,229 @@ impl<'a> DomainParser<'a> {
 
         reqs
     }
+
+    /// `parse_types` extracts all the `:types` out from a PDDL domain.  Aside
+    /// from syntax errors, semantic errors are returned if `object` is
+    /// attempted to be a derived type or a type has circular inheritance.
+    fn parse_types(&mut self) -> Result<ParsedTypes, ParseError<'a>> {
+        let mut ptypes = ParsedTypes::new();
+
+        ptypes.insert("object");
+
+        loop {
+            let tok = next_token!(self, "identifier", ")")?;
+
+            if tok.what == TokenType::RParen {
+                return Ok(ptypes);
+            } else if let TokenType::Ident(_, _) = tok.what {
+                // Basic type declaration (:types vehicle).
+                let token_s = self.token_str(&tok);
+                let mut list: Vec<TypeId> = vec![ptypes.insert(token_s)];
+
+                if token_s.eq_ignore_ascii_case("object") {
+                    return Err(ParseError::semantic(
+                        tok.line,
+                        tok.col,
+                        "object declared as a derived type".to_string(),
+                    ));
+                }
+
+                // Got one type now collect more to get set of types that
+                // inherit from another (:types first second - parent).
+                'inherit_types: loop {
+                    let tok = next_token!(self, "identifier", "-", ")")?;
+
+                    if let TokenType::Ident(_, _) = tok.what {
+                        let s = self.token_str(&tok);
+                        if s.eq_ignore_ascii_case("object") {
+                            return Err(ParseError::semantic(
+                                tok.line,
+                                tok.col,
+                                "object declared as a derived type".to_string(),
+                            ));
+                        }
+                        list.push(ptypes.insert(s));
+                    } else if tok.what == TokenType::RParen {
+                        // No more types, we're done.
+                        return Ok(ptypes);
+                    } else if tok.what == TokenType::Minus {
+                        // Reached inherintance, collect single parent or multiple
+                        // (i.e. "either") types.
+                        let tok = next_token!(self, "identifier", "(")?;
+
+                        if let TokenType::Ident(_, _) = tok.what {
+                            // Single parent case.
+                            let token_s = self.token_str(&tok);
+                            let parent = ptypes.insert(token_s);
+                            for &child in &list {
+                                ptypes.insert_parent(child, parent);
+                                ptypes.insert_child(parent, child);
+                                if ptypes.has_circular_types(child) {
+                                    return Err(ParseError::semantic(
+                                        tok.line,
+                                        tok.col,
+                                        format!("{} has circular inherintance", token_s),
+                                    ));
+                                }
+                            }
+                            break 'inherit_types;
+                        } else if tok.what == TokenType::LParen {
+                            // Multiple parents case.
+                            self.specific_ident("either")?;
+
+                            // Must have at least one parent type.
+                            let parent = ptypes.insert(self.consume_ident()?);
+                            for &child in &list {
+                                ptypes.insert_parent(child, parent);
+                                ptypes.insert_child(parent, child);
+                                if ptypes.has_circular_types(child) {
+                                    return Err(ParseError::semantic(
+                                        tok.line,
+                                        tok.col,
+                                        format!("{} has circular inherintance", token_s),
+                                    ));
+                                }
+                            }
+
+                            // Get the rest of the either parent types.
+                            'either_types: loop {
+                                let tok = next_token!(self, "identifier", ")")?;
+
+                                if let TokenType::Ident(_, _) = tok.what {
+                                    let parent = ptypes.insert(self.token_str(&tok));
+                                    for &child in &list {
+                                        ptypes.insert_parent(child, parent);
+                                        ptypes.insert_child(parent, child);
+                                    }
+                                } else if tok.what == TokenType::RParen {
+                                    break 'either_types;
+                                } else {
+                                    return expect!(self, tok, "identifier", ")");
+                                }
+                            }
+                            break 'inherit_types;
+                        } else {
+                            return expect!(self, tok, "identifier", "(");
+                        }
+                    } else {
+                        return expect!(self, tok, "identifier", "-", ")");
+                    }
+                }
+            } else {
+                return expect!(self, tok, "identifier", ")");
+            }
+        }
+    }
+}
+
+/// `ParsedTypes` is the return result from `DomainParser::parse_types`.
+#[derive(Debug)]
+struct ParsedTypes {
+    types: HashMap<String, TypeId>, // Lowercased type names to their assigned TypeId.
+    type_id: TypeId,                // A TypeId counter.
+    parent_types: Vec<HashSet<TypeId>>, // Immediate parent TypeIds.  Vector is indexed by the child TypeId.
+    child_types: Vec<HashSet<TypeId>>, // Immediate child TypeIds.  Vector is indexed by the parent TypeId.
+}
+
+impl ParsedTypes {
+    fn new() -> ParsedTypes {
+        ParsedTypes {
+            types: HashMap::new(),
+            type_id: 0,
+            parent_types: vec![],
+            child_types: vec![],
+        }
+    }
+
+    /// `insert` inserts `s` and assigns it a `TypeId` if it hasn't already
+    /// been seen.
+    fn insert(&mut self, s: &str) -> TypeId {
+        let id = s.to_ascii_lowercase();
+        if self.types.contains_key(&id) {
+            *self.types.get(&id).unwrap()
+        } else {
+            let tid = self.type_id;
+            self.types.insert(id, tid);
+            self.type_id += 1;
+            self.parent_types.push(HashSet::new());
+            self.child_types.push(HashSet::new());
+            tid
+        }
+    }
+
+    /// `insert_parent` inserts `parent` into `child`'s immediate parent `TypeId` set.
+    fn insert_parent(&mut self, child: TypeId, parent: TypeId) {
+        self.parent_types[child].insert(parent);
+    }
+
+    /// `insert_child` inserts `child` into `parent`'s immediate child `TypeId` set.
+    fn insert_child(&mut self, parent: TypeId, child: TypeId) {
+        self.child_types[parent].insert(child);
+    }
+
+    /// `has_circular_types` returns true if `id` ends up inheriting from itself.
+    fn has_circular_types(&self, id: TypeId) -> bool {
+        let pt = &self.parent_types[id];
+        if pt.contains(&id) {
+            true
+        } else {
+            let mut any = false;
+            for &pid in pt.iter() {
+                any = any || self.check_circular_parent(id, pid);
+            }
+            any
+        }
+    }
+
+    /// `check_circular_parent` is a helper function for `has_circular_types`.
+    fn check_circular_parent(&self, child: TypeId, parent: TypeId) -> bool {
+        let pt = &self.parent_types[parent];
+        if pt.contains(&child) {
+            true
+        } else {
+            let mut any = false;
+            for &pid in pt.iter() {
+                any = any || self.check_circular_parent(child, pid);
+            }
+            any
+        }
+    }
 }
 
 /// `ParseResult` encompasses a result returned from of the different
 /// methods of a `DomainParser`.
 #[derive(Debug)]
 struct ParseResult<'a> {
-    name: &'a str, // Name of a domain.
-    reqs: u32,     // Requirements of the domain represented as bit vector.
+    name: &'a str,      // Name of a domain.
+    reqs: u32,          // Requirements of the domain represented as bit vector.
+    types: ParsedTypes, // Types extracted from the domain.
 }
 
 impl<'a> ParseResult<'a> {
     /// `with_name` returns a ParseResult that has a name of `name`.  All
     /// other fields have their zero value.
     fn with_name(name: &'a str) -> ParseResult<'a> {
-        ParseResult { name, reqs: 0 }
+        ParseResult {
+            name,
+            reqs: 0,
+            types: ParsedTypes::new(),
+        }
     }
 
     /// `add_requirements` adds the requirements of the `reqs` bit vector
     /// to the requirements contained within the `ParseResult`.
     fn add_requirements(&mut self, reqs: u32) {
         self.reqs = self.reqs | reqs
+    }
+
+    /// `has_requirement` returns true if this `ParseResult` has the requirement
+    /// of `r`.
+    fn has_requirement(&self, r: Requirement) -> bool {
+        let b = self.reqs & (1 << r.index());
+        if r == Requirement::Strips {
+            return self.reqs == 0 || b > 0;
+        }
+        b > 0
     }
 }
 
@@ -648,6 +904,26 @@ impl<'a> ParseError<'a> {
             }
         }
     }
+
+    /// `missing` returns a `ParserError` where the requirement is missing
+    /// for `reason`.
+    fn missing(line: usize, col: usize, r: Requirement, reason: &'a str) -> ParseError<'a> {
+        ParseError {
+            what: ParseErrorType::MissingRequirement(r, reason),
+            line: line,
+            col: col,
+        }
+    }
+
+    /// `semantic` returns a `ParseError` that represents some semantic
+    /// error in the PDDL language (i.e. predicate not defined).
+    fn semantic(line: usize, col: usize, what: String) -> ParseError<'a> {
+        ParseError {
+            what: ParseErrorType::SemanticError(what),
+            line,
+            col,
+        }
+    }
 }
 
 impl<'a> error::Error for ParseError<'a> {
@@ -670,6 +946,11 @@ pub enum ParseErrorType<'a> {
     Expect(ExpectToken<'a>),
     /// Signals that extra input was detected at the end of the PDDL domain.
     ExtraInput(&'a str),
+    /// Signals that a `Requirement` is missing for a specific construct which
+    /// is described by the second parameter.
+    MissingRequirement(Requirement, &'a str),
+    /// Signals a semantic error that has occurred.
+    SemanticError(String),
 }
 
 impl<'a> fmt::Display for ParseErrorType<'a> {
@@ -677,6 +958,12 @@ impl<'a> fmt::Display for ParseErrorType<'a> {
         match self {
             ParseErrorType::Expect(et) => write!(f, "{}", et),
             ParseErrorType::ExtraInput(s) => write!(f, "Extra input detected: {}", s),
+            ParseErrorType::SemanticError(what) => write!(f, "{}", what),
+            ParseErrorType::MissingRequirement(r, what) => write!(
+                f,
+                "{} requires {} declaration in :requirements section",
+                what, r
+            ),
         }
     }
 }
