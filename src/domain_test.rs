@@ -227,11 +227,13 @@ fn parse_requirements_fails_with_invalid_token() {
 
 #[test]
 fn can_parse_types() -> Result<(), ParseError<'static>> {
-    let d = Domain::parse("(define (domain foo)
-                             (:requirements :strips :typing)
-                             (:types car truck motorcycle - vehicle
-                                     bicycle - object
-                                     moped - (either motorcycle bicycle)))")?;
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types car truck motorcycle - vehicle
+                   bicycle - object
+                   moped - (either motorcycle bicycle)))",
+    )?;
 
     assert_eq!(d.id_for_type("object"), Some(&0));
     assert_eq!(d.id_for_type("car"), Some(&1));
@@ -266,18 +268,22 @@ fn can_parse_types() -> Result<(), ParseError<'static>> {
 
 #[test]
 fn has_default_object() -> Result<(), ParseError<'static>> {
-    let d = Domain::parse("(define (domain foo)
-                             (:requirements :strips :typing)
-                             (:types))")?;
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types))",
+    )?;
     assert_eq!(d.id_for_type("object"), Some(&0));
     Ok(())
 }
 
 #[test]
 fn object_can_not_be_a_new_type() {
-    let d = Domain::parse("(define (domain foo)
-                             (:requirements :strips :typing)
-                             (:types object))");
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types object))",
+    );
     if let Ok(_) = d {
         panic!("Received successful parse when error should have occurred.");
     }
@@ -285,9 +291,11 @@ fn object_can_not_be_a_new_type() {
 
 #[test]
 fn object_can_not_be_a_new_type_2() {
-    let d = Domain::parse("(define (domain foo)
-                             (:requirements :strips :typing)
-                             (:types car object))");
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types car object))",
+    );
     if let Ok(_) = d {
         panic!("Received successful parse when error should have occurred.");
     }
@@ -295,11 +303,13 @@ fn object_can_not_be_a_new_type_2() {
 
 #[test]
 fn circular_inheritance_causes_error() {
-    let d = Domain::parse("(define (domain foo)
-                             (:requirements :strips :typing)
-                             (:types shape - object
-                                     square - (either rectangle shape)
-                                     rectangle - square))");
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types shape - object
+                   square - (either rectangle shape)
+                   rectangle - square))",
+    );
     // Circular inheritance from single parent.
     if let Ok(_) = d {
         panic!("Received successful parse when error should have occurred.");
@@ -308,11 +318,13 @@ fn circular_inheritance_causes_error() {
 
 #[test]
 fn circular_inheritance_causes_error_2() {
-    let d = Domain::parse("(define (domain foo)
-                             (:requirements :strips :typing)
-                             (:types shape - rectangle
-                                     square - shape
-                                     rectangle - (either square box)))");
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types shape - rectangle
+                   square - shape
+                   rectangle - (either square box)))",
+    );
     // Circular inheritance from either type.
     if let Ok(_) = d {
         panic!("Received successful parse when error should have occurred.");
@@ -321,14 +333,49 @@ fn circular_inheritance_causes_error_2() {
 
 #[test]
 fn circular_inheritance_causes_error_3() {
-    let d = Domain::parse("(define (domain foo)
-                             (:requirements :strips :typing)
-                             (:types shape - rectangle
-                                     square - shape
-                                     rectangle - (either box square)))");
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types shape - rectangle
+                   square - shape
+                   rectangle - (either box square)))",
+    );
     // Circular inheritance from either type.
     if let Ok(_) = d {
         panic!("Received successful parse when error should have occurred.");
     }
 }
 
+#[test]
+fn correct_constants_from_top_level() -> Result<(), ParseError<'static>> {
+    let mut dp = DomainParser::new(
+        "(define (domain foo)
+(:requirements :strips :typing)
+(:types item)
+(:constants foo bar - item))",
+    );
+    let pr = dp.top_level()?;
+    assert_eq!(pr.constants.line, 4);
+    assert_eq!(pr.constants.col, 13);
+    assert_eq!(pr.constants.pos, 79);
+    Ok(())
+}
+
+#[test]
+fn unbalanced_parens_in_constants() {
+    let mut dp = DomainParser::new(
+        "(define (domain foo)
+(:requirements :strips :typing)
+(:types item)
+(:constants foo bar - item",
+    );
+    let pr = dp.top_level();
+    if let Err(pe) = pr {
+        match pe.what {
+            ParseErrorType::Expect(_) => return,
+            _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
+        }
+    } else {
+        panic!("Received successful parse when error should have occurred.");
+    }
+}

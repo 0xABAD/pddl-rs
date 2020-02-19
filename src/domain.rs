@@ -310,7 +310,7 @@ impl<'a> DomainParser<'a> {
             if top_keys.len() == 7 {
                 top_keys = &top_keys[0..6];
                 if self.next_keyword_is(TOP_LEVEL_KEYWORDS[6]) {
-                    // TODO: Check constants.
+                    result.constants = self.balance_parens()?;
                     self.check_next_token_is_one_of(&PARENS)?;
                     continue;
                 }
@@ -319,7 +319,7 @@ impl<'a> DomainParser<'a> {
             if top_keys.len() == 6 {
                 top_keys = &top_keys[0..5];
                 if self.next_keyword_is(TOP_LEVEL_KEYWORDS[5]) {
-                    // TODO: Check predicates.
+                    result.predicates = self.balance_parens()?;
                     self.check_next_token_is_one_of(&PARENS)?;
                     continue;
                 }
@@ -328,7 +328,7 @@ impl<'a> DomainParser<'a> {
             if top_keys.len() == 5 {
                 top_keys = &top_keys[0..4];
                 if self.next_keyword_is(TOP_LEVEL_KEYWORDS[4]) {
-                    // TODO: Check functions.
+                    result.functions = self.balance_parens()?;
                     self.check_next_token_is_one_of(&PARENS)?;
                     continue;
                 }
@@ -337,26 +337,26 @@ impl<'a> DomainParser<'a> {
             if top_keys.len() == 4 {
                 top_keys = &top_keys[0..3];
                 if self.next_keyword_is(TOP_LEVEL_KEYWORDS[3]) {
-                    // TODO: Check constraints.
+                    result.constraints = self.balance_parens()?;
                     self.check_next_token_is_one_of(&PARENS)?;
                     continue;
                 }
             }
 
             if self.next_keyword_is(TOP_LEVEL_KEYWORDS[2]) {
-                // TODO: Mark :action.
+                result.actions.push(self.balance_parens()?);
                 self.check_next_token_is_one_of(&PARENS)?;
                 continue;
             }
 
             if self.next_keyword_is(TOP_LEVEL_KEYWORDS[1]) {
-                // TODO: Mark :durative-action.
+                result.duratives.push(self.balance_parens()?);
                 self.check_next_token_is_one_of(&PARENS)?;
                 continue;
             }
 
             if self.next_keyword_is(TOP_LEVEL_KEYWORDS[0]) {
-                // TODO: Mark :derived.
+                result.deriveds.push(self.balance_parens()?);
                 self.check_next_token_is_one_of(&PARENS)?;
                 continue;
             }
@@ -721,6 +721,27 @@ impl<'a> DomainParser<'a> {
             }
         }
     }
+
+    /// `balance_parens` consumes tokens until the current count of parenthesis
+    /// reaches zero.  Initially, the count is one since it is expected that the
+    /// first left paren has already been consumed.  On a successful balance then
+    /// the first token that is consumed is returned.
+    fn balance_parens(&mut self) -> Result<Token, ParseError<'a>> {
+        let first = next_token!(self, "valid input")?;
+        let mut tok = first;
+        let mut count = 1;
+        loop {
+            if let TokenType::LParen = tok.what {
+                count += 1;
+            } else if let TokenType::RParen = tok.what {
+                count -= 1;
+                if count == 0 {
+                    return Ok(first);
+                }
+            }
+            tok = next_token!(self, "valid input")?;
+        }
+    }
 }
 
 /// `Types` is the collection of all types found from `:types` section
@@ -827,9 +848,16 @@ impl Types {
 /// methods of a `DomainParser`.
 #[derive(Debug)]
 struct ParseResult<'a> {
-    name: &'a str, // Name of a domain.
-    reqs: u32,     // Requirements of the domain represented as bit vector.
-    types: Types,  // Types extracted from the domain.
+    name: &'a str,         // Name of a domain.
+    reqs: u32,             // Requirements of the domain represented as bit vector.
+    types: Types,          // Types extracted from the domain.
+    constants: Token,      // Token within the PDDL source where constants are located.
+    predicates: Token,     // Token within the PDDL source where predicates are located.
+    functions: Token,      // Token within the PDDL source where functions are located.
+    constraints: Token,    // Token within the PDDL source where constraints are located.
+    actions: Vec<Token>,   // Tokens where :actions begin in the PDDL source.
+    duratives: Vec<Token>, // Tokens where :durative-actions begin in the PDDL source.
+    deriveds: Vec<Token>,  // Tokens where :derived functions begin in the PDDL source.
 }
 
 impl<'a> ParseResult<'a> {
@@ -840,6 +868,13 @@ impl<'a> ParseResult<'a> {
             name,
             reqs: 0,
             types: Types::new(),
+            constants: Token::new(TokenType::LParen, 0, 0, 0),
+            predicates: Token::new(TokenType::LParen, 0, 0, 0),
+            functions: Token::new(TokenType::LParen, 0, 0, 0),
+            constraints: Token::new(TokenType::LParen, 0, 0, 0),
+            actions: vec![],
+            duratives: vec![],
+            deriveds: vec![],
         }
     }
 
