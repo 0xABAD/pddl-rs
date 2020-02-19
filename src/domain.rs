@@ -11,8 +11,8 @@ pub struct Domain<'a> {
     /// The parsed domain name.
     pub name: &'a str,
 
-    reqs: u32,          // Parsed (:requirements) as a bit vector.
-    types: ParsedTypes, // Parsed (:types).
+    reqs: u32,    // Parsed (:requirements) as a bit vector.
+    types: Types, // Parsed (:types).
 }
 
 impl<'a> Domain<'a> {
@@ -637,8 +637,8 @@ impl<'a> DomainParser<'a> {
     /// `parse_types` extracts all the `:types` out from a PDDL domain.  Aside
     /// from syntax errors, semantic errors are returned if `object` is
     /// attempted to be a derived type or a type has circular inheritance.
-    fn parse_types(&mut self) -> Result<ParsedTypes, ParseError<'a>> {
-        let mut ptypes = ParsedTypes::new();
+    fn parse_types(&mut self) -> Result<Types, ParseError<'a>> {
+        let mut ptypes = Types::new();
 
         ptypes.insert("object");
 
@@ -649,10 +649,10 @@ impl<'a> DomainParser<'a> {
                 return Ok(ptypes);
             } else if let TokenType::Ident(_, _) = tok.what {
                 // Basic type declaration (:types vehicle).
-                let token_s = self.token_str(&tok);
-                let mut list: Vec<TypeId> = vec![ptypes.insert(token_s)];
+                let name = self.token_str(&tok);
+                let mut siblings: Vec<TypeId> = vec![ptypes.insert(name)];
 
-                if token_s.eq_ignore_ascii_case("object") {
+                if name.eq_ignore_ascii_case("object") {
                     return Err(ParseError::semantic(
                         tok.line,
                         tok.col,
@@ -660,7 +660,7 @@ impl<'a> DomainParser<'a> {
                     ));
                 }
 
-                // Got one type now collect more to get set of types that
+                // Have one type now collect more to get a set of types that
                 // inherit from another (:types first second - parent).
                 'inherit_types: loop {
                     let tok = next_token!(self, "identifier", "-", ")")?;
@@ -674,7 +674,7 @@ impl<'a> DomainParser<'a> {
                                 "object declared as a derived type".to_string(),
                             ));
                         }
-                        list.push(ptypes.insert(s));
+                        siblings.push(ptypes.insert(s));
                     } else if tok.what == TokenType::RParen {
                         // No more types, we're done.
                         return Ok(ptypes);
@@ -685,49 +685,24 @@ impl<'a> DomainParser<'a> {
 
                         if let TokenType::Ident(_, _) = tok.what {
                             // Single parent case.
-                            let token_s = self.token_str(&tok);
-                            let parent = ptypes.insert(token_s);
-                            for &child in &list {
-                                ptypes.insert_parent(child, parent);
-                                ptypes.insert_child(parent, child);
-                                if ptypes.has_circular_types(child) {
-                                    return Err(ParseError::semantic(
-                                        tok.line,
-                                        tok.col,
-                                        format!("{} has circular inherintance", token_s),
-                                    ));
-                                }
-                            }
+                            let name = self.token_str(&tok);
+                            ptypes.insert_with_siblings(name, &siblings, tok.line, tok.col)?;
                             break 'inherit_types;
                         } else if tok.what == TokenType::LParen {
                             // Multiple parents case.
                             self.specific_ident("either")?;
 
                             // Must have at least one parent type.
-                            let parent = ptypes.insert(self.consume_ident()?);
-                            for &child in &list {
-                                ptypes.insert_parent(child, parent);
-                                ptypes.insert_child(parent, child);
-                                if ptypes.has_circular_types(child) {
-                                    return Err(ParseError::semantic(
-                                        tok.line,
-                                        tok.col,
-                                        format!("{} has circular inherintance", token_s),
-                                    ));
-                                }
-                            }
+                            let name = self.consume_ident()?;
+                            ptypes.insert_with_siblings(name, &siblings, tok.line, tok.col)?;
 
                             // Get the rest of the either parent types.
                             'either_types: loop {
-                                let tok = next_token!(self, "identifier", ")")?;
-
-                                if let TokenType::Ident(_, _) = tok.what {
-                                    let parent = ptypes.insert(self.token_str(&tok));
-                                    for &child in &list {
-                                        ptypes.insert_parent(child, parent);
-                                        ptypes.insert_child(parent, child);
-                                    }
-                                } else if tok.what == TokenType::RParen {
+                                let t = next_token!(self, "identifier", ")")?;
+                                if let TokenType::Ident(_, _) = t.what {
+                                    let name = self.token_str(&t);
+                                    ptypes.insert_with_siblings(name, &siblings, t.line, t.col)?;
+                                } else if t.what == TokenType::RParen {
                                     break 'either_types;
                                 } else {
                                     return expect!(self, tok, "identifier", ")");
@@ -748,18 +723,19 @@ impl<'a> DomainParser<'a> {
     }
 }
 
-/// `ParsedTypes` is the return result from `DomainParser::parse_types`.
+/// `Types` is the collection of all types found from `:types` section
+/// within a PDDL domain.
 #[derive(Debug)]
-struct ParsedTypes {
+struct Types {
     types: HashMap<String, TypeId>, // Lowercased type names to their assigned TypeId.
-    type_id: TypeId,                // A TypeId counter.
     parent_types: Vec<HashSet<TypeId>>, // Immediate parent TypeIds.  Vector is indexed by the child TypeId.
     child_types: Vec<HashSet<TypeId>>, // Immediate child TypeIds.  Vector is indexed by the parent TypeId.
+    type_id: TypeId,                   // A TypeId counter.
 }
 
-impl ParsedTypes {
-    fn new() -> ParsedTypes {
-        ParsedTypes {
+impl Types {
+    fn new() -> Types {
+        Types {
             types: HashMap::new(),
             type_id: 0,
             parent_types: vec![],
@@ -781,6 +757,31 @@ impl ParsedTypes {
             self.child_types.push(HashSet::new());
             tid
         }
+    }
+
+    /// `insert_with_siblings` will call `insert` and then `insert_parent`
+    /// and `insert_child` for every sibling in `siblings`.  Returns a
+    /// semantic error if circular inherintance is detected.
+    fn insert_with_siblings<'a>(
+        &mut self,
+        name: &'a str,
+        siblings: &Vec<TypeId>,
+        line: usize,
+        col: usize,
+    ) -> Result<(), ParseError<'a>> {
+        let parent = self.insert(name);
+        for &child in siblings {
+            self.insert_parent(child, parent);
+            self.insert_child(parent, child);
+            if self.has_circular_types(child) {
+                return Err(ParseError::semantic(
+                    line,
+                    col,
+                    format!("{} has circular inherintance", name),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// `insert_parent` inserts `parent` into `child`'s immediate parent `TypeId` set.
@@ -826,9 +827,9 @@ impl ParsedTypes {
 /// methods of a `DomainParser`.
 #[derive(Debug)]
 struct ParseResult<'a> {
-    name: &'a str,      // Name of a domain.
-    reqs: u32,          // Requirements of the domain represented as bit vector.
-    types: ParsedTypes, // Types extracted from the domain.
+    name: &'a str, // Name of a domain.
+    reqs: u32,     // Requirements of the domain represented as bit vector.
+    types: Types,  // Types extracted from the domain.
 }
 
 impl<'a> ParseResult<'a> {
@@ -838,7 +839,7 @@ impl<'a> ParseResult<'a> {
         ParseResult {
             name,
             reqs: 0,
-            types: ParsedTypes::new(),
+            types: Types::new(),
         }
     }
 

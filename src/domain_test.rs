@@ -319,3 +319,16 @@ fn circular_inheritance_causes_error_2() {
     }
 }
 
+#[test]
+fn circular_inheritance_causes_error_3() {
+    let d = Domain::parse("(define (domain foo)
+                             (:requirements :strips :typing)
+                             (:types shape - rectangle
+                                     square - shape
+                                     rectangle - (either box square)))");
+    // Circular inheritance from either type.
+    if let Ok(_) = d {
+        panic!("Received successful parse when error should have occurred.");
+    }
+}
+
