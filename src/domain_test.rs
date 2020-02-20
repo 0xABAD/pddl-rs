@@ -379,3 +379,20 @@ fn unbalanced_parens_in_constants() {
         panic!("Received successful parse when error should have occurred.");
     }
 }
+
+#[test]
+fn constraints_section_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:constraints (and)))",
+    );
+    if let Err(pe) = d {
+        if let ParseErrorType::MissingRequirement { req, what: _ } = pe.what {
+            if req == Requirement::Constraints {
+                return;
+            }
+        }
+    }
+    panic!("Missing constraints requirement error not returned.");
+}

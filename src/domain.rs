@@ -336,8 +336,15 @@ impl<'a> DomainParser<'a> {
 
             if top_keys.len() == 4 {
                 top_keys = &top_keys[0..3];
-                if self.next_keyword_is(TOP_LEVEL_KEYWORDS[3]) {
-                    // TODO: check :constraints requirement.
+                if let Some(t) = self.with_last_keyword(TOP_LEVEL_KEYWORDS[3]) {
+                    if !result.has_requirement(Requirement::Constraints) {
+                        return Err(ParseError::missing(
+                            t.line,
+                            t.col,
+                            Requirement::Constraints,
+                            ":constraints section",
+                        ));
+                    }
                     result.constraints = self.balance_parens()?;
                     self.check_next_token_is_one_of(&PARENS)?;
                     continue;
