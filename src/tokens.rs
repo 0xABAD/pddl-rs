@@ -104,7 +104,10 @@ impl<'a> Tokenizer<'a> {
                     return Err(TokenError::InvalidInput(te));
                 }
             } else {
-                return Err(TokenError::EndOfInput(self.line, self.col));
+                return Err(TokenError::EndOfInput {
+                    line: self.line,
+                    col: self.col,
+                });
             }
         }
     }
@@ -392,9 +395,8 @@ impl<'a> TokenType {
 #[derive(Debug, PartialEq)]
 pub enum TokenError {
     /// EndOfInput is not necessarily an error despite being returned as
-    /// one.  The first parameter is line number and the second is the
-    /// column number of when the end of input was found.
-    EndOfInput(usize, usize),
+    /// one.
+    EndOfInput { line: usize, col: usize },
     /// InvalidInput represents a scanned character that was not
     /// recognized by the Tokenizer.  The TokenInputError contains
     /// all information of the invalid scanned input.
@@ -443,7 +445,9 @@ impl error::Error for TokenError {
 impl fmt::Display for TokenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenError::EndOfInput(line, col) => write!(f, "{}:{}: end of input found", line, col),
+            TokenError::EndOfInput { line, col } => {
+                write!(f, "{}:{}: end of input found", line, col)
+            }
             TokenError::InvalidInput(e) => {
                 write!(f, "{}:{} -- invalid input '{}'", e.line, e.col, e.what)
             }

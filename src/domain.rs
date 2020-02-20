@@ -367,7 +367,7 @@ impl<'a> DomainParser<'a> {
 
         self.consume(TokenType::RParen)?;
         match self.tokenizer.next() {
-            Err(TokenError::EndOfInput(_, _)) => Ok(result),
+            Err(TokenError::EndOfInput { line: _, col: _ }) => Ok(result),
             Err(TokenError::InvalidInput(te)) => {
                 let s = te.to_string(self.contents);
                 Err(ParseError {
@@ -914,14 +914,10 @@ pub struct ParseError<'a> {
 impl<'a> ParseError<'a> {
     /// `expect` returns a `ParseError` for an error that occurred
     /// on line, `line`, column, `col`, and has a value of `have` where
-    /// `expecting` are the expected values at the time of parse.
-    fn expect(line: usize, col: usize, have: &'a str, expecting: Vec<&'a str>) -> ParseError<'a> {
-        let et = ExpectToken {
-            have,
-            expect: expecting,
-        };
+    /// `expect` are the expected values at the time of parse.
+    fn expect(line: usize, col: usize, have: &'a str, expect: Vec<&'a str>) -> ParseError<'a> {
         ParseError {
-            what: ParseErrorType::Expect(et),
+            what: ParseErrorType::Expect { have, expect },
             line,
             col,
         }
@@ -936,7 +932,7 @@ impl<'a> ParseError<'a> {
         expecting: Vec<&'a str>,
     ) -> ParseError<'a> {
         match e {
-            TokenError::EndOfInput(line, col) => {
+            TokenError::EndOfInput { line, col } => {
                 ParseError::expect(line, col, "end of input", expecting)
             }
             TokenError::InvalidInput(te) => {
@@ -948,9 +944,9 @@ impl<'a> ParseError<'a> {
 
     /// `missing` returns a `ParserError` where the requirement is missing
     /// for `reason`.
-    fn missing(line: usize, col: usize, r: Requirement, reason: &'a str) -> ParseError<'a> {
+    fn missing(line: usize, col: usize, req: Requirement, what: &'a str) -> ParseError<'a> {
         ParseError {
-            what: ParseErrorType::MissingRequirement(r, reason),
+            what: ParseErrorType::MissingRequirement { req, what },
             line: line,
             col: col,
         }
@@ -984,12 +980,12 @@ impl<'a> fmt::Display for ParseError<'a> {
 #[derive(Debug, PartialEq)]
 pub enum ParseErrorType<'a> {
     /// Where the parser expected a specific token but received something else.
-    Expect(ExpectToken<'a>),
+    Expect { have: &'a str, expect: Vec<&'a str> },
     /// Signals that extra input was detected at the end of the PDDL domain.
     ExtraInput(&'a str),
     /// Signals that a `Requirement` is missing for a specific construct which
     /// is described by the second parameter.
-    MissingRequirement(Requirement, &'a str),
+    MissingRequirement { req: Requirement, what: &'a str },
     /// Signals a semantic error that has occurred.
     SemanticError(String),
 }
@@ -997,40 +993,28 @@ pub enum ParseErrorType<'a> {
 impl<'a> fmt::Display for ParseErrorType<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseErrorType::Expect(et) => write!(f, "{}", et),
+            ParseErrorType::Expect { have, expect } => {
+                f.write_str("Expecting ")?;
+
+                if expect.len() == 1 {
+                    write!(f, "{}, found {}", expect[0], have)
+                } else {
+                    f.write_str("either ")?;
+
+                    let end = expect.len() - 1;
+                    for i in 0..end {
+                        write!(f, "{}, ", expect[i])?;
+                    }
+                    write!(f, "or {}, found {}", expect[end], have)
+                }
+            }
             ParseErrorType::ExtraInput(s) => write!(f, "Extra input detected: {}", s),
             ParseErrorType::SemanticError(what) => write!(f, "{}", what),
-            ParseErrorType::MissingRequirement(r, what) => write!(
+            ParseErrorType::MissingRequirement { req, what } => write!(
                 f,
                 "{} requires {} declaration in :requirements section",
-                what, r
+                what, req
             ),
-        }
-    }
-}
-
-/// `ExpectToken` contains the information necessary to describe a
-/// `ParseErrorType::Expect` error.
-#[derive(Debug, PartialEq)]
-pub struct ExpectToken<'a> {
-    pub have: &'a str,
-    pub expect: Vec<&'a str>,
-}
-
-impl<'a> fmt::Display for ExpectToken<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Expecting ")?;
-
-        if self.expect.len() == 1 {
-            write!(f, "{}, found {}", self.expect[0], self.have)
-        } else {
-            f.write_str("either ")?;
-
-            let end = self.expect.len() - 1;
-            for i in 0..end {
-                write!(f, "{}, ", self.expect[i])?;
-            }
-            write!(f, "or {}, found {}", self.expect[end], self.have)
         }
     }
 }

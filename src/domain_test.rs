@@ -21,7 +21,7 @@ fn parse_top_level_name() -> Result<(), ParseError<'static>> {
 fn unexpected_top_level_end_of_input() {
     if let Err(pe) = Domain::parse("(define (domain foo)") {
         match pe.what {
-            ParseErrorType::Expect(et) => assert_eq!(et.expect, vec!["(", ")"]),
+            ParseErrorType::Expect { have: _, expect } => assert_eq!(expect, vec!["(", ")"]),
             _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
         }
     } else {
@@ -45,7 +45,7 @@ fn invalid_top_level_extra_right_paren() {
 fn invalid_token_at_top_level() {
     if let Err(pe) = Domain::parse("(define (domain foo) %)") {
         match pe.what {
-            ParseErrorType::Expect(et) => assert_eq!(et.expect, vec!["(", ")"]),
+            ParseErrorType::Expect { have: _, expect } => assert_eq!(expect, vec!["(", ")"]),
             _ => panic!(
                 "Invalid ParseErrorType -- have {:?}, want Expect('(', ')')",
                 pe.what
@@ -60,8 +60,8 @@ fn invalid_token_at_top_level() {
 fn invalid_top_level_keyword() {
     if let Err(pe) = Domain::parse("(define (domain foo) (:foo))") {
         match pe.what {
-            ParseErrorType::Expect(et) => assert_eq!(
-                et.expect,
+            ParseErrorType::Expect { have: _, expect } => assert_eq!(
+                expect,
                 vec![
                     ":derived",
                     ":durative-action",
@@ -195,10 +195,10 @@ fn parse_requirements_fails_with_invalid_requirement() {
 
     if let Err(pe) = Domain::parse(DOMAIN) {
         match pe.what {
-            ParseErrorType::Expect(et) => {
+            ParseErrorType::Expect { have: _, expect } => {
                 let mut v = REQUIREMENTS.to_vec();
                 v.push(")");
-                assert_eq!(et.expect, v)
+                assert_eq!(expect, v)
             }
             _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
         }
@@ -213,10 +213,10 @@ fn parse_requirements_fails_with_invalid_token() {
 
     if let Err(pe) = Domain::parse(DOMAIN) {
         match pe.what {
-            ParseErrorType::Expect(et) => {
+            ParseErrorType::Expect { have: _, expect } => {
                 let mut v = REQUIREMENTS.to_vec();
                 v.push(")");
-                assert_eq!(et.expect, v)
+                assert_eq!(expect, v)
             }
             _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
         }
@@ -372,7 +372,7 @@ fn unbalanced_parens_in_constants() {
     let pr = dp.top_level();
     if let Err(pe) = pr {
         match pe.what {
-            ParseErrorType::Expect(_) => return,
+            ParseErrorType::Expect { have: _, expect: _ } => return,
             _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
         }
     } else {
