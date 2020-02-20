@@ -337,6 +337,7 @@ impl<'a> DomainParser<'a> {
             if top_keys.len() == 4 {
                 top_keys = &top_keys[0..3];
                 if self.next_keyword_is(TOP_LEVEL_KEYWORDS[3]) {
+                    // TODO: check :constraints requirement.
                     result.constraints = self.balance_parens()?;
                     self.check_next_token_is_one_of(&PARENS)?;
                     continue;
@@ -350,12 +351,14 @@ impl<'a> DomainParser<'a> {
             }
 
             if self.next_keyword_is(TOP_LEVEL_KEYWORDS[1]) {
+                // TODO: check :durative-action requirement.
                 result.duratives.push(self.balance_parens()?);
                 self.check_next_token_is_one_of(&PARENS)?;
                 continue;
             }
 
             if self.next_keyword_is(TOP_LEVEL_KEYWORDS[0]) {
+                // TODO: check :derived-predicates requirement.
                 result.deriveds.push(self.balance_parens()?);
                 self.check_next_token_is_one_of(&PARENS)?;
                 continue;
@@ -638,7 +641,7 @@ impl<'a> DomainParser<'a> {
     /// from syntax errors, semantic errors are returned if `object` is
     /// attempted to be a derived type or a type has circular inheritance.
     fn parse_types(&mut self) -> Result<Types, ParseError<'a>> {
-        let mut ptypes = Types::new();
+        let mut ptypes = Types::default();
 
         ptypes.insert("object");
 
@@ -754,8 +757,8 @@ struct Types {
     type_id: TypeId,                   // A TypeId counter.
 }
 
-impl Types {
-    fn new() -> Types {
+impl Default for Types {
+    fn default() -> Self {
         Types {
             types: HashMap::new(),
             type_id: 0,
@@ -763,7 +766,9 @@ impl Types {
             child_types: vec![],
         }
     }
+}
 
+impl Types {
     /// `insert` inserts `s` and assigns it a `TypeId` if it hasn't already
     /// been seen.
     fn insert(&mut self, s: &str) -> TypeId {
@@ -867,7 +872,7 @@ impl<'a> ParseResult<'a> {
         ParseResult {
             name,
             reqs: 0,
-            types: Types::new(),
+            types: Types::default(),
             constants: Token::new(TokenType::LParen, 0, 0, 0),
             predicates: Token::new(TokenType::LParen, 0, 0, 0),
             functions: Token::new(TokenType::LParen, 0, 0, 0),
