@@ -396,3 +396,42 @@ fn constraints_section_missing_requirement() {
     }
     panic!("Missing constraints requirement error not returned.");
 }
+
+#[test]
+fn durative_action_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:durative-action bar
+              :parameters ()
+              :duration ()
+              :condition ()
+              :effect ()))",
+    );
+    if let Err(pe) = d {
+        if let ParseErrorType::MissingRequirement { req, what: _ } = pe.what {
+            if req == Requirement::DurativeActions {
+                return;
+            }
+        }
+    }
+    panic!("Missing durative-actions requirement error not returned.");
+}
+
+#[test]
+fn defined_predicate_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:predicates (baz) (quux))
+           (:derived (bar) (and (baz) (quux))))",
+    );
+    if let Err(pe) = d {
+        if let ParseErrorType::MissingRequirement { req, what: _ } = pe.what {
+            if req == Requirement::DerivedPredicates {
+                return;
+            }
+        }
+    }
+    panic!("Missing derived-predicates requirement error not returned.");
+}

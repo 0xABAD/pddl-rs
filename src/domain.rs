@@ -357,15 +357,29 @@ impl<'a> DomainParser<'a> {
                 continue;
             }
 
-            if self.next_keyword_is(TOP_LEVEL_KEYWORDS[1]) {
-                // TODO: check :durative-action requirement.
+            if let Some(t) = self.with_last_keyword(TOP_LEVEL_KEYWORDS[1]) {
+                if !result.has_requirement(Requirement::DurativeActions) {
+                    return Err(ParseError::missing(
+                        t.line,
+                        t.col,
+                        Requirement::DurativeActions,
+                        ":durative-action",
+                    ));
+                }
                 result.duratives.push(self.balance_parens()?);
                 self.check_next_token_is_one_of(&PARENS)?;
                 continue;
             }
 
-            if self.next_keyword_is(TOP_LEVEL_KEYWORDS[0]) {
-                // TODO: check :derived-predicates requirement.
+            if let Some(t) = self.with_last_keyword(TOP_LEVEL_KEYWORDS[0]) {
+                if !result.has_requirement(Requirement::DerivedPredicates) {
+                    return Err(ParseError::missing(
+                        t.line,
+                        t.col,
+                        Requirement::DerivedPredicates,
+                        ":derived predicate",
+                    ));
+                }
                 result.deriveds.push(self.balance_parens()?);
                 self.check_next_token_is_one_of(&PARENS)?;
                 continue;
