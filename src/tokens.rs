@@ -317,6 +317,12 @@ pub struct Token {
     pub line: usize,
 }
 
+impl Default for Token {
+    fn default() -> Self {
+        Token::new(TokenType::LParen, 0, 0, 0)
+    }
+}
+
 impl Token {
     /// New returns a new Token.
     pub fn new(what: TokenType, pos: usize, col: usize, line: usize) -> Token {
