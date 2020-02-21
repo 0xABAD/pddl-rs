@@ -751,7 +751,26 @@ impl<'a> DomainParser<'a> {
     /// first left paren has already been consumed.  On a successful balance then
     /// the first token that is consumed is returned.
     fn balance_parens(&mut self) -> Result<Token, ParseError<'a>> {
-        let first = next_token!(self, "valid input")?;
+        // Here we have a custom token consumption function that only
+        // reports end of input errors.  We want to skip over invalid
+        // token input errors because we don't know what want to parse
+        // as our sole goal is to find balancing parenthesis.  Later
+        // at different parsing stage will these invalid tokens be
+        // properly reported.  The Time token type was chosen arbitrarily
+        // as this function only cares about left and right paren tokens.
+        let mut next = || match self.next_token() {
+            Ok(t) => Ok(t),
+            Err(e) => match e {
+                TokenError::EndOfInput { line: _, col: _ } => {
+                    Err(ParseError::from_token_error(e, self.contents, vec![]))
+                }
+                TokenError::InvalidInput(te) => {
+                    Ok(Token::new(TokenType::Time, te.pos, te.col, te.line))
+                }
+            },
+        };
+
+        let first = next()?;
         let mut tok = first;
         let mut count = 1;
         loop {
@@ -763,7 +782,7 @@ impl<'a> DomainParser<'a> {
                     return Ok(first);
                 }
             }
-            tok = next_token!(self, "valid input")?;
+            tok = next()?;
         }
     }
 }
