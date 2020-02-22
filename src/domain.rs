@@ -316,7 +316,7 @@ impl<'a> DomainParser<'a> {
     /// determine their starting location within the contents of the
     /// `DomainParser` and that they form a balance construct (i.e. have
     /// balanced parenthesis.
-    fn top_level(&mut self) -> Result<ParseResult<'a>, ParseError<'a>> {
+    fn top_level(&mut self) -> Result<ParseResult<'a>, ParseError> {
         self.consume(TokenType::LParen)?;
         self.specific_ident("define")?;
         self.consume(TokenType::LParen)?;
@@ -449,7 +449,7 @@ impl<'a> DomainParser<'a> {
         match self.tokenizer.next() {
             Err(TokenError::EndOfInput { line: _, col: _ }) => Ok(result),
             Err(TokenError::InvalidInput(te)) => {
-                let s = te.to_string(self.contents);
+                let s = te.to_string(self.contents).to_string();
                 Err(ParseError {
                     what: ParseErrorType::ExtraInput(s),
                     col: te.col,
@@ -457,7 +457,7 @@ impl<'a> DomainParser<'a> {
                 })
             }
             Ok(t) => {
-                let s = t.what.to_string(self.contents);
+                let s = t.what.to_string(self.contents).to_string();
                 Err(ParseError {
                     what: ParseErrorType::ExtraInput(s),
                     col: t.col,
@@ -482,7 +482,7 @@ impl<'a> DomainParser<'a> {
     /// `expect_next` is like `next_token` but transforms the `TokenError`
     /// into a `ParseError` if such an error is returned.  The transformed
     /// error uses `what` as the expected next token.
-    fn expect_next(&mut self, what: &'a str) -> Result<Token, ParseError<'a>> {
+    fn expect_next(&mut self, what: &'a str) -> Result<Token, ParseError> {
         self.next_token().or_else(|e| token_error!(self, e, what))
     }
 
@@ -536,7 +536,7 @@ impl<'a> DomainParser<'a> {
     /// identifier whose string form is case insensitive equal to `what`.
     /// If that is not the case then a `ParseError` is returned that expects
     /// `what`.
-    fn specific_ident(&mut self, what: &'a str) -> Result<Token, ParseError<'a>> {
+    fn specific_ident(&mut self, what: &'a str) -> Result<Token, ParseError> {
         self.expect_next(what).and_then(|tok| {
             if let TokenType::Ident(s, e) = tok.what {
                 let ident = &self.contents[s..e];
@@ -554,7 +554,7 @@ impl<'a> DomainParser<'a> {
     /// `consume` consumes and returns the next token whose `TokenType` is
     /// is equal to `what`. If that is not the case then a `ParseError` is
     /// returned that expects `what`.
-    fn consume(&mut self, what: TokenType) -> Result<Token, ParseError<'a>> {
+    fn consume(&mut self, what: TokenType) -> Result<Token, ParseError> {
         self.expect_next(what.to_string(self.contents))
             .and_then(|tok| {
                 if tok.what == what {
@@ -567,7 +567,7 @@ impl<'a> DomainParser<'a> {
 
     /// `consume_ident` consumes the next token that needs to be an
     /// identifier and returns the string form of that identifier.
-    fn consume_ident(&mut self) -> Result<&'a str, ParseError<'a>> {
+    fn consume_ident(&mut self) -> Result<&'a str, ParseError> {
         self.expect_next("identifier").and_then(|tok| {
             if let TokenType::Ident(_, _) = tok.what {
                 Ok(self.token_str(&tok))
@@ -581,7 +581,7 @@ impl<'a> DomainParser<'a> {
     /// one of `ttypes`.  Note this does not consume the checked token as
     /// further decisions may be made depending on the value of the next
     /// token.
-    fn check_next_token_is_one_of(&mut self, ttypes: &[TokenType]) -> Result<(), ParseError<'a>> {
+    fn check_next_token_is_one_of(&mut self, ttypes: &[TokenType]) -> Result<(), ParseError> {
         let tok: Token;
 
         if let Some(t) = self.last_token {
@@ -617,7 +617,7 @@ impl<'a> DomainParser<'a> {
     /// `check_next_token_is_one_of` this method does not consume the
     /// the next token.  The Ok result returned is the index of the match
     /// into the `words` slice.
-    fn check_next_is_one_of(&mut self, words: &[&'a str]) -> Result<usize, ParseError<'a>> {
+    fn check_next_is_one_of(&mut self, words: &[&'a str]) -> Result<usize, ParseError> {
         let tok: Token;
 
         if let Some(t) = self.last_token {
@@ -651,7 +651,7 @@ impl<'a> DomainParser<'a> {
 
     /// `next_is_one_of` is exactly like `check_next_is_one_of` but
     /// also consumes the token.
-    fn next_is_one_of(&mut self, words: &[&'a str]) -> Result<usize, ParseError<'a>> {
+    fn next_is_one_of(&mut self, words: &[&'a str]) -> Result<usize, ParseError> {
         let idx = self.check_next_is_one_of(words)?;
         self.last_token = None;
         Ok(idx)
@@ -664,7 +664,7 @@ impl<'a> DomainParser<'a> {
     /// that a requirement that implies others (e.g. `:adl` implies
     /// `:strips`, `:typing`, and others) is expanded and also to the
     /// requirements bit vector.
-    fn parse_requirements(&mut self) -> Result<u32, ParseError<'a>> {
+    fn parse_requirements(&mut self) -> Result<u32, ParseError> {
         // Parse the first requirement where it is expected to be at
         // least one requriement.
         let idx = self.next_is_one_of(&REQUIREMENTS)?;
@@ -720,7 +720,7 @@ impl<'a> DomainParser<'a> {
     /// `parse_types` extracts all the `:types` out from a PDDL domain.  Aside
     /// from syntax errors, semantic errors are returned if `object` is
     /// attempted to be a derived type or a type has circular inheritance.
-    fn parse_types(&mut self) -> Result<Types, ParseError<'a>> {
+    fn parse_types(&mut self) -> Result<Types, ParseError> {
         let mut ptypes = Types::default();
 
         ptypes.insert("object");
@@ -809,7 +809,7 @@ impl<'a> DomainParser<'a> {
     /// reaches zero.  Initially, the count is one since it is expected that the
     /// first left paren has already been consumed.  On a successful balance then
     /// the first token that is consumed is returned.
-    fn balance_parens(&mut self) -> Result<Token, ParseError<'a>> {
+    fn balance_parens(&mut self) -> Result<Token, ParseError> {
         // Here we have a custom token consumption function that only
         // reports end of input errors.  We want to skip over invalid
         // token input errors because we don't know what want to parse
@@ -846,7 +846,7 @@ impl<'a> DomainParser<'a> {
     }
 
     /// `predicates` parses the `:predicates` section of a PDDL domain.
-    fn predicates(&mut self, types: &Types) -> Result<ParseResult, ParseError<'a>> {
+    fn predicates(&mut self, types: &Types) -> Result<ParseResult, ParseError> {
         let mut result = ParseResult::with_name("");
         let mut pred_id = 0;
 
@@ -881,7 +881,7 @@ impl<'a> DomainParser<'a> {
     /// `atomic_formula` parses the predicate or function signature
     /// found in either the :predicates or :functions section of the
     /// PDDL domain.
-    fn atomic_formula(&mut self, types: &Types) -> Result<AtomicFormula, ParseError<'a>> {
+    fn atomic_formula(&mut self, types: &Types) -> Result<AtomicFormula, ParseError> {
         self.consume(TokenType::LParen)?;
 
         let mut af = AtomicFormula {
@@ -1050,7 +1050,7 @@ impl Types {
         siblings: &Vec<TypeId>,
         line: usize,
         col: usize,
-    ) -> Result<(), ParseError<'a>> {
+    ) -> Result<(), ParseError> {
         let parent = self.insert(name);
         for &child in siblings {
             self.insert_parent(child, parent);
@@ -1160,35 +1160,30 @@ impl<'a> ParseResult<'a> {
 
 /// `ParseError` is the error returned from parsing a PDDL domain.
 #[derive(Debug, PartialEq)]
-pub struct ParseError<'a> {
+pub struct ParseError {
     /// The specific parse error that occurred.
-    pub what: ParseErrorType<'a>,
+    pub what: ParseErrorType,
     /// The line number the error occurred on.
     pub line: usize,
     /// The column number the error occurred on.
     pub col: usize,
 }
 
-impl<'a> ParseError<'a> {
+impl ParseError {
     /// `expect` returns a `ParseError` for an error that occurred
     /// on line, `line`, column, `col`, and has a value of `have` where
     /// `expect` are the expected values at the time of parse.
-    fn expect(line: usize, col: usize, have: &'a str, expect: Vec<&'a str>) -> ParseError<'a> {
-        ParseError {
-            what: ParseErrorType::Expect { have, expect },
-            line,
-            col,
-        }
+    fn expect(line: usize, col: usize, have: &str, expect: Vec<&str>) -> ParseError {
+        let have = have.to_string();
+        let expect = expect.iter().map(|s| s.to_string()).collect();
+        let what = ParseErrorType::Expect { have, expect };
+        ParseError { what, line, col }
     }
 
     /// `from_token_error` converts a `TokenError` into a `ParseError`.  `contents`
     /// are the original source contents of the `DomainParser` and `expecting` is
     /// are the values that were expected at the time of the parse.
-    fn from_token_error(
-        e: TokenError,
-        contents: &'a str,
-        expecting: Vec<&'a str>,
-    ) -> ParseError<'a> {
+    fn from_token_error(e: TokenError, contents: &str, expecting: Vec<&str>) -> ParseError {
         match e {
             TokenError::EndOfInput { line, col } => {
                 ParseError::expect(line, col, "end of input", expecting)
@@ -1202,43 +1197,35 @@ impl<'a> ParseError<'a> {
 
     /// `missing` returns a `ParserError` where the requirement is missing
     /// for `reason`.
-    fn missing(line: usize, col: usize, req: Requirement, what: &'a str) -> ParseError<'a> {
-        ParseError {
-            what: ParseErrorType::MissingRequirement { req, what },
-            line: line,
-            col: col,
-        }
+    fn missing(line: usize, col: usize, req: Requirement, what: &str) -> ParseError {
+        let what = what.to_string();
+        let what = ParseErrorType::MissingRequirement { req, what };
+        ParseError { what, line, col }
     }
 
     /// `semantic` returns a `ParseError` that represents some semantic
     /// error in the PDDL language (i.e. predicate not defined).
-    fn semantic(line: usize, col: usize, what: &str) -> ParseError<'a> {
-        ParseError {
-            what: ParseErrorType::SemanticError(what.to_string()),
-            line,
-            col,
-        }
+    fn semantic(line: usize, col: usize, what: &str) -> ParseError {
+        let what = ParseErrorType::SemanticError(what.to_string());
+        ParseError { what, line, col }
     }
 
     /// `type_not_defined` returns a `ParseError` where `what` was declared
     /// as a type but wasn't defined within the `:types` section of the
     /// PDDL domain.
-    fn type_not_defined(line: usize, col: usize, what: &str) -> ParseError<'a> {
-        ParseError {
-            what: ParseErrorType::TypeNotDefined(what.to_string()),
-            line,
-            col,
-        }
+    fn type_not_defined(line: usize, col: usize, what: &str) -> ParseError {
+        let what = ParseErrorType::TypeNotDefined(what.to_string());
+        ParseError { what, line, col }
     }
 }
 
-impl<'a> error::Error for ParseError<'a> {
+impl error::Error for ParseError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         None
     }
 }
 
-impl<'a> fmt::Display for ParseError<'a> {
+impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}: error: {}", self.line, self.col, self.what)
     }
@@ -1247,21 +1234,21 @@ impl<'a> fmt::Display for ParseError<'a> {
 /// `ParseErrorType` are the different type of `ParseError`s that
 /// can occur during parsing a PDDL domain.
 #[derive(Debug, PartialEq)]
-pub enum ParseErrorType<'a> {
+pub enum ParseErrorType {
     /// Where the parser expected a specific token but received something else.
-    Expect { have: &'a str, expect: Vec<&'a str> },
+    Expect { have: String, expect: Vec<String> },
     /// Signals that extra input was detected at the end of the PDDL domain.
-    ExtraInput(&'a str),
+    ExtraInput(String),
     /// Signals that a `Requirement` is missing for a specific construct which
     /// is described by the second parameter.
-    MissingRequirement { req: Requirement, what: &'a str },
+    MissingRequirement { req: Requirement, what: String },
     /// Signals a semantic error that has occurred.
     SemanticError(String),
     /// A type declared was not defined within the :types section.
     TypeNotDefined(String),
 }
 
-impl<'a> fmt::Display for ParseErrorType<'a> {
+impl fmt::Display for ParseErrorType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ParseErrorType::Expect { have, expect } => {

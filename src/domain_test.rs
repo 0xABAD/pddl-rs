@@ -11,7 +11,7 @@ fn check_if_not_domain() {
 }
 
 #[test]
-fn parse_top_level_name() -> Result<(), ParseError<'static>> {
+fn parse_top_level_name() -> Result<(), ParseError> {
     let dom = Domain::parse("(define (domain foo))")?;
     assert_eq!(dom.name, "foo");
     Ok(())
@@ -82,7 +82,7 @@ fn invalid_top_level_keyword() {
 }
 
 #[test]
-fn can_parse_requirements() -> Result<(), ParseError<'static>> {
+fn can_parse_requirements() -> Result<(), ParseError> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips
@@ -133,14 +133,14 @@ fn can_parse_requirements() -> Result<(), ParseError<'static>> {
 }
 
 #[test]
-fn no_requirements_implies_strips() -> Result<(), ParseError<'static>> {
+fn no_requirements_implies_strips() -> Result<(), ParseError> {
     let d = Domain::parse("(define (domain foo))")?;
     assert!(d.has_requirement(Requirement::Strips));
     Ok(())
 }
 
 #[test]
-fn parse_requirements_allows_duplicates() -> Result<(), ParseError<'static>> {
+fn parse_requirements_allows_duplicates() -> Result<(), ParseError> {
     let d = Domain::parse("(define (domain foo) (:requirements :strips :typing :strips :typing))")?;
     assert!(d.has_requirement(Requirement::Strips));
     assert!(d.has_requirement(Requirement::Typing));
@@ -148,7 +148,7 @@ fn parse_requirements_allows_duplicates() -> Result<(), ParseError<'static>> {
 }
 
 #[test]
-fn quantified_preconditions_implies_others() -> Result<(), ParseError<'static>> {
+fn quantified_preconditions_implies_others() -> Result<(), ParseError> {
     let d = Domain::parse("(define (domain foo) (:requirements :quantified-preconditions))")?;
     assert!(d.has_requirement(Requirement::QuantifiedPreconditions));
     assert!(d.has_requirement(Requirement::ExistentialPreconditions));
@@ -157,7 +157,7 @@ fn quantified_preconditions_implies_others() -> Result<(), ParseError<'static>> 
 }
 
 #[test]
-fn fluents_implies_others() -> Result<(), ParseError<'static>> {
+fn fluents_implies_others() -> Result<(), ParseError> {
     let d = Domain::parse("(define (domain foo) (:requirements :fluents))")?;
     assert!(d.has_requirement(Requirement::Fluents));
     assert!(d.has_requirement(Requirement::NumericFluents));
@@ -166,7 +166,7 @@ fn fluents_implies_others() -> Result<(), ParseError<'static>> {
 }
 
 #[test]
-fn adl_implies_others() -> Result<(), ParseError<'static>> {
+fn adl_implies_others() -> Result<(), ParseError> {
     let d = Domain::parse("(define (domain foo) (:requirements :adl))")?;
     assert!(d.has_requirement(Requirement::Adl));
     assert!(d.has_requirement(Requirement::Strips));
@@ -182,7 +182,7 @@ fn adl_implies_others() -> Result<(), ParseError<'static>> {
 }
 
 #[test]
-fn timed_initial_literals_implies_others() -> Result<(), ParseError<'static>> {
+fn timed_initial_literals_implies_others() -> Result<(), ParseError> {
     let d = Domain::parse("(define (domain foo) (:requirements :timed-initial-literals))")?;
     assert!(d.has_requirement(Requirement::TimedInitialLiterals));
     assert!(d.has_requirement(Requirement::DurativeActions));
@@ -226,7 +226,7 @@ fn parse_requirements_fails_with_invalid_token() {
 }
 
 #[test]
-fn can_parse_types() -> Result<(), ParseError<'static>> {
+fn can_parse_types() -> Result<(), ParseError> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -267,7 +267,7 @@ fn can_parse_types() -> Result<(), ParseError<'static>> {
 }
 
 #[test]
-fn has_default_object() -> Result<(), ParseError<'static>> {
+fn has_default_object() -> Result<(), ParseError> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -347,7 +347,7 @@ fn circular_inheritance_causes_error_3() {
 }
 
 #[test]
-fn correct_constants_from_top_level() -> Result<(), ParseError<'static>> {
+fn correct_constants_from_top_level() -> Result<(), ParseError> {
     let mut dp = DomainParser::new(
         "(define (domain foo)
 (:requirements :strips :typing)
@@ -437,7 +437,7 @@ fn derived_predicate_missing_requirement() {
 }
 
 #[test]
-fn can_parse_predicates_without_typing() -> Result<(), ParseError<'static>> {
+fn can_parse_predicates_without_typing() -> Result<(), ParseError> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips)
@@ -463,7 +463,7 @@ fn can_parse_predicates_without_typing() -> Result<(), ParseError<'static>> {
 }
 
 #[test]
-fn can_parse_predicates() -> Result<(), ParseError<'static>> {
+fn can_parse_predicates() -> Result<(), ParseError> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
