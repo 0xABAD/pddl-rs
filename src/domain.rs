@@ -230,7 +230,7 @@ pub struct Param(Vec<TypeId>);
 macro_rules! expect {
     ($dp:tt, $tok:tt, $($arg:tt)*) => {
         {
-            let s = $dp.token_str(&$tok);
+            let s = $tok.to_str($dp.contents);
             let v = vec![$($arg)*];
             (Err(ParseError::expect($tok.line, $tok.col, s, v)))
         }
@@ -301,11 +301,6 @@ impl<'a> DomainParser<'a> {
             return self.reqs == 0 || b > 0;
         }
         b > 0
-    }
-
-    /// `token_str` returns the string form of the `Token`, `t`.
-    fn token_str(&self, t: &Token) -> &'a str {
-        t.to_str(self.contents)
     }
 
     /// `top_level` parses the top level forms of a PDDL domain.
@@ -505,7 +500,7 @@ impl<'a> DomainParser<'a> {
     /// form is case insensitive equal to `keyword`.
     fn next_keyword_is(&mut self, keyword: &str) -> bool {
         if let Some(t) = self.last_token {
-            if let TokenType::Keyword(_, _) = t.what {
+            if t.is_keyword() {
                 let s = t.to_str(self.contents);
                 if s.eq_ignore_ascii_case(keyword) {
                     self.last_token = None;
@@ -521,8 +516,8 @@ impl<'a> DomainParser<'a> {
     /// the last token if there is one.
     fn with_last_keyword(&mut self, keyword: &str) -> Option<Token> {
         if let Some(t) = self.last_token {
-            if let TokenType::Keyword(_, _) = t.what {
-                let s = self.token_str(&t);
+            if t.is_keyword() {
+                let s = t.to_str(self.contents);
                 if s.eq_ignore_ascii_case(keyword) {
                     self.last_token = None;
                     return Some(t);
@@ -569,8 +564,8 @@ impl<'a> DomainParser<'a> {
     /// identifier and returns the string form of that identifier.
     fn consume_ident(&mut self) -> Result<&'a str, ParseError> {
         self.expect_next("identifier").and_then(|tok| {
-            if let TokenType::Ident(_, _) = tok.what {
-                Ok(self.token_str(&tok))
+            if tok.is_ident() {
+                Ok(tok.to_str(self.contents))
             } else {
                 expect!(self, tok, "identifier")
             }
@@ -638,10 +633,7 @@ impl<'a> DomainParser<'a> {
             }
         }
 
-        let mut v = Vec::new();
-        for &w in words {
-            v.push(w);
-        }
+        let v = words.iter().map(|&w| w).collect();
         let s = tok.to_str(self.contents);
         Err(ParseError::expect(tok.line, tok.col, s, v))
     }
@@ -726,9 +718,9 @@ impl<'a> DomainParser<'a> {
         loop {
             let tok = next_token!(self, "identifier", ")")?;
 
-            if tok.what == TokenType::RParen {
+            if tok.is_right() {
                 return Ok(types);
-            } else if let TokenType::Ident(_, _) = tok.what {
+            } else if tok.is_ident() {
                 // Basic type declaration (:types vehicle).
                 let name = tok.to_str(source);
                 let mut siblings: Vec<(TypeId, Token)> = vec![(types.insert(name), tok)];
@@ -746,8 +738,8 @@ impl<'a> DomainParser<'a> {
                 'more_types: loop {
                     let tok = next_token!(self, "identifier", "-", ")")?;
 
-                    if let TokenType::Ident(_, _) = tok.what {
-                        let s = self.token_str(&tok);
+                    if tok.is_ident() {
+                        let s = tok.to_str(self.contents);
                         if s.eq_ignore_ascii_case("object") {
                             return Err(ParseError::semantic(
                                 tok.line,
@@ -756,10 +748,10 @@ impl<'a> DomainParser<'a> {
                             ));
                         }
                         siblings.push((types.insert(s), tok));
-                    } else if tok.what == TokenType::RParen {
+                    } else if tok.is_right() {
                         // No more types, we're done.
                         return Ok(types);
-                    } else if tok.what == TokenType::Minus {
+                    } else if tok.is_dash() {
                         // Reached inherintance, collect single or multiple parent types.
                         self.type_declarations(|t| {
                             let parent_name = t.to_str(source);
@@ -801,14 +793,14 @@ impl<'a> DomainParser<'a> {
     {
         let t1 = next_token!(self, "identifier", "(")?;
 
-        if let TokenType::Ident(_, _) = t1.what {
+        if t1.is_ident() {
             on_type(&t1)?;
-        } else if t1.what == TokenType::LParen {
+        } else if t1.is_left() {
             self.specific_ident("either")?;
 
             // Must have at least one either type.
             let t2 = next_token!(self, "identifier")?;
-            if let TokenType::Ident(_, _) = t2.what {
+            if t2.is_ident() {
                 on_type(&t2)?;
             } else {
                 return expect!(self, t2, "identifier");
@@ -817,9 +809,9 @@ impl<'a> DomainParser<'a> {
             // Get the rest of the either parent types.
             loop {
                 let t2 = next_token!(self, "identifier", ")")?;
-                if let TokenType::Ident(_, _) = t2.what {
+                if t2.is_ident() {
                     on_type(&t2)?;
-                } else if t2.what == TokenType::RParen {
+                } else if t2.is_right() {
                     return Ok(());
                 } else {
                     return expect!(self, t2, "identifier", ")");
@@ -859,9 +851,9 @@ impl<'a> DomainParser<'a> {
         let mut tok = first;
         let mut count = 1;
         loop {
-            if let TokenType::LParen = tok.what {
+            if tok.is_left() {
                 count += 1;
-            } else if let TokenType::RParen = tok.what {
+            } else if tok.is_right() {
                 count -= 1;
                 if count == 0 {
                     return Ok(first);
@@ -887,7 +879,7 @@ impl<'a> DomainParser<'a> {
         loop {
             self.check_next_token_is_one_of(&[TokenType::LParen, TokenType::RParen])?;
             if let Some(t) = self.last_token {
-                if t.what != TokenType::LParen {
+                if !t.is_left() {
                     break;
                 }
             }
@@ -925,20 +917,21 @@ impl<'a> DomainParser<'a> {
         'variables: loop {
             let tok = next_token!(self, "variable", ")")?;
 
-            if tok.what == TokenType::RParen {
+            if tok.is_right() {
                 return Ok(af);
-            } else if let TokenType::Variable(_, _) = tok.what {
+            // } else if let TokenType::Variable(_, _) = tok.what {
+            } else if tok.is_var() {
                 af.params.push(Param(vec![]));
 
                 'types: loop {
                     let tok = next_token!(self, "variable", "-", ")")?;
 
-                    if let TokenType::Variable(_, _) = tok.what {
+                    if tok.is_var() {
                         af.params.push(Param(vec![]));
-                    } else if tok.what == TokenType::RParen {
+                    } else if tok.is_right() {
                         // No more variables, we're done.
                         return Ok(af);
-                    } else if tok.what == TokenType::Minus {
+                    } else if tok.is_dash() {
                         // Reached type declaration, collect single or multiple
                         // (i.e. "either") types if and only if the :typing
                         // requirement has been specified.

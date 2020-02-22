@@ -340,6 +340,45 @@ impl Token {
     pub fn to_str<'a>(&self, source: &'a str) -> &'a str {
         self.what.to_str(source)
     }
+
+    /// `is_left` returns true if the token is a left paren.
+    pub fn is_left(&self) -> bool {
+        self.what == TokenType::LParen
+    }
+
+    /// `is_right` returns true if the token is a right paren.
+    pub fn is_right(&self) -> bool {
+        self.what == TokenType::RParen
+    }
+
+    /// `is_dash` returns true if the token is a '-' symbol.
+    pub fn is_dash(&self) -> bool {
+        self.what == TokenType::Minus
+    }
+
+    /// `is_ident` returns true if the token is an identifier.
+    pub fn is_ident(&self) -> bool {
+        match self.what {
+            TokenType::Ident(_, _) => true,
+            _ => false,
+        }
+    }
+
+    /// `is_var` returns true if the token is a variable.
+    pub fn is_var(&self) -> bool {
+        match self.what {
+            TokenType::Variable(_, _) => true,
+            _ => false,
+        }
+    }
+
+    /// `is_keyword` returns true if the token is a keyword.
+    pub fn is_keyword(&self) -> bool {
+        match self.what {
+            TokenType::Keyword(_, _) => true,
+            _ => false,
+        }
+    }
 }
 
 /// TokenType specifies what kind of token was scanned.
