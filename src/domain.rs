@@ -595,10 +595,7 @@ impl<'a> DomainParser<'a> {
             }
         }
 
-        let mut v = Vec::new();
-        for tt in ttypes {
-            v.push(tt.to_str(self.contents));
-        }
+        let v = ttypes.iter().map(|tt| tt.to_str(self.contents)).collect();
         let s = tok.to_str(self.contents);
         Err(ParseError::expect(tok.line, tok.col, s, v))
     }
@@ -706,6 +703,10 @@ impl<'a> DomainParser<'a> {
         reqs
     }
 
+    fn semantic(&self, t: &Token, s: &str) -> ParseError {
+        ParseError::semantic(t.line, t.col, s)
+    }
+
     /// `parse_types` extracts all the `:types` out from a PDDL domain.  Aside
     /// from syntax errors, semantic errors are returned if `object` is
     /// attempted to be a derived type or a type has circular inheritance.
@@ -726,11 +727,7 @@ impl<'a> DomainParser<'a> {
                 let mut siblings: Vec<(TypeId, Token)> = vec![(types.insert(name), tok)];
 
                 if name.eq_ignore_ascii_case("object") {
-                    return Err(ParseError::semantic(
-                        tok.line,
-                        tok.col,
-                        "object declared as a derived type",
-                    ));
+                    return Err(self.semantic(&tok, "object declared as a derived type"));
                 }
 
                 // Have one type now collect more to get a set of types that
@@ -741,11 +738,7 @@ impl<'a> DomainParser<'a> {
                     if tok.is_ident() {
                         let s = tok.to_str(self.contents);
                         if s.eq_ignore_ascii_case("object") {
-                            return Err(ParseError::semantic(
-                                tok.line,
-                                tok.col,
-                                "object declared as a derived type",
-                            ));
+                            return Err(self.semantic(&tok, "object declared as a derived type"));
                         }
                         siblings.push((types.insert(s), tok));
                     } else if tok.is_right() {
