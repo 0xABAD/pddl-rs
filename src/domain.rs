@@ -588,10 +588,7 @@ impl<'a> DomainParser<'a> {
             tok = t
         } else {
             tok = self.tokenizer.next().or_else(|e| {
-                let v = ttypes
-                    .iter()
-                    .map(|tt| tt.to_str(self.contents))
-                    .collect();
+                let v = ttypes.iter().map(|tt| tt.to_str(self.contents)).collect();
                 Err(ParseError::from_token_error(e, self.contents, v))
             })?;
             self.last_token = Some(tok);
@@ -721,19 +718,20 @@ impl<'a> DomainParser<'a> {
     /// from syntax errors, semantic errors are returned if `object` is
     /// attempted to be a derived type or a type has circular inheritance.
     fn parse_types(&mut self) -> Result<Types, ParseError> {
-        let mut ptypes = Types::default();
+        let mut types = Types::default();
+        let source = self.contents;
 
-        ptypes.insert("object");
+        types.insert("object");
 
         loop {
             let tok = next_token!(self, "identifier", ")")?;
 
             if tok.what == TokenType::RParen {
-                return Ok(ptypes);
+                return Ok(types);
             } else if let TokenType::Ident(_, _) = tok.what {
                 // Basic type declaration (:types vehicle).
-                let name = self.token_str(&tok);
-                let mut siblings: Vec<TypeId> = vec![ptypes.insert(name)];
+                let name = tok.to_str(source);
+                let mut siblings: Vec<(TypeId, Token)> = vec![(types.insert(name), tok)];
 
                 if name.eq_ignore_ascii_case("object") {
                     return Err(ParseError::semantic(
@@ -745,7 +743,7 @@ impl<'a> DomainParser<'a> {
 
                 // Have one type now collect more to get a set of types that
                 // inherit from another (:types first second - parent).
-                'inherit_types: loop {
+                'more_types: loop {
                     let tok = next_token!(self, "identifier", "-", ")")?;
 
                     if let TokenType::Ident(_, _) = tok.what {
@@ -757,44 +755,33 @@ impl<'a> DomainParser<'a> {
                                 "object declared as a derived type",
                             ));
                         }
-                        siblings.push(ptypes.insert(s));
+                        siblings.push((types.insert(s), tok));
                     } else if tok.what == TokenType::RParen {
                         // No more types, we're done.
-                        return Ok(ptypes);
+                        return Ok(types);
                     } else if tok.what == TokenType::Minus {
-                        // Reached inherintance, collect single parent or multiple
-                        // (i.e. "either") types.
-                        let tok = next_token!(self, "identifier", "(")?;
+                        // Reached inherintance, collect single or multiple parent types.
+                        self.type_declarations(|t| {
+                            let parent_name = t.to_str(source);
+                            let parent_id = types.insert(parent_name);
 
-                        if let TokenType::Ident(_, _) = tok.what {
-                            // Single parent case.
-                            let name = self.token_str(&tok);
-                            ptypes.insert_with_siblings(name, &siblings, tok.line, tok.col)?;
-                            break 'inherit_types;
-                        } else if tok.what == TokenType::LParen {
-                            // Multiple parents case.
-                            self.specific_ident("either")?;
+                            for &(child_id, child_t) in &siblings {
+                                types.insert_parent(child_id, parent_id);
+                                types.insert_child(parent_id, child_id);
 
-                            // Must have at least one parent type.
-                            let name = self.consume_ident()?;
-                            ptypes.insert_with_siblings(name, &siblings, tok.line, tok.col)?;
-
-                            // Get the rest of the either parent types.
-                            'either_types: loop {
-                                let t = next_token!(self, "identifier", ")")?;
-                                if let TokenType::Ident(_, _) = t.what {
-                                    let name = self.token_str(&t);
-                                    ptypes.insert_with_siblings(name, &siblings, t.line, t.col)?;
-                                } else if t.what == TokenType::RParen {
-                                    break 'either_types;
-                                } else {
-                                    return expect!(self, tok, "identifier", ")");
+                                if types.has_circular_types(child_id) {
+                                    let t = child_t;
+                                    let s = format!(
+                                        "{} has circular inherintance with {}",
+                                        t.to_str(source),
+                                        parent_name
+                                    );
+                                    return Err(ParseError::semantic(t.line, t.col, &s));
                                 }
                             }
-                            break 'inherit_types;
-                        } else {
-                            return expect!(self, tok, "identifier", "(");
-                        }
+                            Ok(())
+                        })?;
+                        break 'more_types;
                     } else {
                         return expect!(self, tok, "identifier", "-", ")");
                     }
@@ -803,6 +790,45 @@ impl<'a> DomainParser<'a> {
                 return expect!(self, tok, "identifier", ")");
             }
         }
+    }
+
+    /// `type_declarations` parses the type declarations that follow a '-' in
+    /// some PDDL domain construct (e.g. ?a - (either foo bar) ?b - baz) and
+    /// calls `on_type` for each type encountered.
+    fn type_declarations<F>(&mut self, mut on_type: F) -> Result<(), ParseError>
+    where
+        F: FnMut(&Token) -> Result<(), ParseError>,
+    {
+        let t1 = next_token!(self, "identifier", "(")?;
+
+        if let TokenType::Ident(_, _) = t1.what {
+            on_type(&t1)?;
+        } else if t1.what == TokenType::LParen {
+            self.specific_ident("either")?;
+
+            // Must have at least one either type.
+            let t2 = next_token!(self, "identifier")?;
+            if let TokenType::Ident(_, _) = t2.what {
+                on_type(&t2)?;
+            } else {
+                return expect!(self, t2, "identifier");
+            }
+
+            // Get the rest of the either parent types.
+            loop {
+                let t2 = next_token!(self, "identifier", ")")?;
+                if let TokenType::Ident(_, _) = t2.what {
+                    on_type(&t2)?;
+                } else if t2.what == TokenType::RParen {
+                    return Ok(());
+                } else {
+                    return expect!(self, t2, "identifier", ")");
+                }
+            }
+        } else {
+            return expect!(self, t1, "identifier", "(");
+        }
+        Ok(())
     }
 
     /// `balance_parens` consumes tokens until the current count of parenthesis
@@ -925,61 +951,20 @@ impl<'a> DomainParser<'a> {
                             ));
                         }
 
-                        let tok = next_token!(self, "identifier", "(")?;
-
-                        if let TokenType::Ident(_, _) = tok.what {
-                            // single type
-                            let name = self.token_str(&tok);
+                        let source = self.contents;
+                        self.type_declarations(|t| {
+                            let name = t.to_str(source);
                             if let Some(tid) = types.get(name) {
                                 for i in var_begin..af.params.len() {
                                     af.params[i].0.push(tid);
                                 }
-                            } else {
-                                return Err(ParseError::type_not_defined(tok.line, tok.col, name));
+                                return Ok(());
                             }
+                            Err(ParseError::type_not_defined(t.line, t.col, name))
+                        })?;
 
-                            var_begin = af.params.len();
-                            break 'types;
-                        } else if tok.what == TokenType::LParen {
-                            // Multiple types.
-                            self.specific_ident("either")?;
-
-                            // Must have at least one type.
-                            let name = self.consume_ident()?;
-                            if let Some(tid) = types.get(name) {
-                                for i in var_begin..af.params.len() {
-                                    af.params[i].0.push(tid);
-                                }
-                            } else {
-                                return Err(ParseError::type_not_defined(tok.line, tok.col, name));
-                            }
-
-                            // Get the rest of the either types.
-                            'either_types: loop {
-                                let t = next_token!(self, "identifier", ")")?;
-                                if let TokenType::Ident(_, _) = t.what {
-                                    let name = self.token_str(&t);
-                                    if let Some(tid) = types.get(name) {
-                                        for i in var_begin..af.params.len() {
-                                            af.params[i].0.push(tid);
-                                        }
-                                    } else {
-                                        return Err(ParseError::type_not_defined(
-                                            tok.line, tok.col, name,
-                                        ));
-                                    }
-                                } else if t.what == TokenType::RParen {
-                                    break 'either_types;
-                                } else {
-                                    return expect!(self, tok, "identifier", ")");
-                                }
-                            }
-
-                            var_begin = af.params.len();
-                            break 'types;
-                        } else {
-                            return expect!(self, tok, "identifier", "(");
-                        }
+                        var_begin = af.params.len();
+                        break 'types;
                     } else {
                         return expect!(self, tok, "identifier", "-", ")");
                     }
@@ -1039,31 +1024,6 @@ impl Types {
             self.child_types.push(HashSet::new());
             tid
         }
-    }
-
-    /// `insert_with_siblings` will call `insert` and then `insert_parent`
-    /// and `insert_child` for every sibling in `siblings`.  Returns a
-    /// semantic error if circular inherintance is detected.
-    fn insert_with_siblings<'a>(
-        &mut self,
-        name: &'a str,
-        siblings: &Vec<TypeId>,
-        line: usize,
-        col: usize,
-    ) -> Result<(), ParseError> {
-        let parent = self.insert(name);
-        for &child in siblings {
-            self.insert_parent(child, parent);
-            self.insert_child(parent, child);
-            if self.has_circular_types(child) {
-                return Err(ParseError::semantic(
-                    line,
-                    col,
-                    &format!("{} has circular inherintance", name),
-                ));
-            }
-        }
-        Ok(())
     }
 
     /// `insert_parent` inserts `parent` into `child`'s immediate parent `TypeId` set.
