@@ -333,6 +333,13 @@ impl Token {
             line,
         }
     }
+
+    /// `to_str` returns the string representation of the scanned
+    /// TokenType.  `source` should be the exact source contents
+    /// that was passed to the `Tokenizer` on its construction.
+    pub fn to_str<'a>(&self, source: &'a str) -> &'a str {
+        self.what.to_str(source)
+    }
 }
 
 /// TokenType specifies what kind of token was scanned.
@@ -373,7 +380,7 @@ impl<'a> TokenType {
     /// To_string returns the string representation of the scanned
     /// TokenType.  `contents` should be the exact source contents
     /// that was passed to the `Tokenizer` on its construction.
-    pub fn to_string(self, contents: &'a str) -> &'a str {
+    pub fn to_str(self, contents: &'a str) -> &'a str {
         match self {
             TokenType::LParen => "(",
             TokenType::RParen => ")",

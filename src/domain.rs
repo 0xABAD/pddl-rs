@@ -305,7 +305,7 @@ impl<'a> DomainParser<'a> {
 
     /// `token_str` returns the string form of the `Token`, `t`.
     fn token_str(&self, t: &Token) -> &'a str {
-        t.what.to_string(self.contents)
+        t.to_str(self.contents)
     }
 
     /// `top_level` parses the top level forms of a PDDL domain.
@@ -457,7 +457,7 @@ impl<'a> DomainParser<'a> {
                 })
             }
             Ok(t) => {
-                let s = t.what.to_string(self.contents).to_string();
+                let s = t.to_str(self.contents).to_string();
                 Err(ParseError {
                     what: ParseErrorType::ExtraInput(s),
                     col: t.col,
@@ -506,7 +506,7 @@ impl<'a> DomainParser<'a> {
     fn next_keyword_is(&mut self, keyword: &str) -> bool {
         if let Some(t) = self.last_token {
             if let TokenType::Keyword(_, _) = t.what {
-                let s = t.what.to_string(self.contents);
+                let s = t.to_str(self.contents);
                 if s.eq_ignore_ascii_case(keyword) {
                     self.last_token = None;
                     return true;
@@ -555,12 +555,12 @@ impl<'a> DomainParser<'a> {
     /// is equal to `what`. If that is not the case then a `ParseError` is
     /// returned that expects `what`.
     fn consume(&mut self, what: TokenType) -> Result<Token, ParseError> {
-        self.expect_next(what.to_string(self.contents))
+        self.expect_next(what.to_str(self.contents))
             .and_then(|tok| {
                 if tok.what == what {
                     Ok(tok)
                 } else {
-                    expect!(self, tok, what.to_string(self.contents))
+                    expect!(self, tok, what.to_str(self.contents))
                 }
             })
     }
@@ -590,7 +590,7 @@ impl<'a> DomainParser<'a> {
             tok = self.tokenizer.next().or_else(|e| {
                 let v = ttypes
                     .iter()
-                    .map(|tt| tt.to_string(self.contents))
+                    .map(|tt| tt.to_str(self.contents))
                     .collect();
                 Err(ParseError::from_token_error(e, self.contents, v))
             })?;
@@ -605,9 +605,9 @@ impl<'a> DomainParser<'a> {
 
         let mut v = Vec::new();
         for tt in ttypes {
-            v.push(tt.to_string(self.contents));
+            v.push(tt.to_str(self.contents));
         }
-        let s = tok.what.to_string(self.contents);
+        let s = tok.to_str(self.contents);
         Err(ParseError::expect(tok.line, tok.col, s, v))
     }
 
@@ -635,7 +635,7 @@ impl<'a> DomainParser<'a> {
 
         for i in 0..words.len() {
             let w = words[i];
-            let s = tok.what.to_string(self.contents);
+            let s = tok.to_str(self.contents);
             if s.eq_ignore_ascii_case(w) {
                 return Ok(i);
             }
@@ -645,7 +645,7 @@ impl<'a> DomainParser<'a> {
         for &w in words {
             v.push(w);
         }
-        let s = tok.what.to_string(self.contents);
+        let s = tok.to_str(self.contents);
         Err(ParseError::expect(tok.line, tok.col, s, v))
     }
 
