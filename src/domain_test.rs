@@ -419,7 +419,7 @@ fn durative_action_missing_requirement() {
 }
 
 #[test]
-fn defined_predicate_missing_requirement() {
+fn derived_predicate_missing_requirement() {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips)
@@ -434,4 +434,125 @@ fn defined_predicate_missing_requirement() {
         }
     }
     panic!("Missing derived-predicates requirement error not returned.");
+}
+
+#[test]
+fn can_parse_predicates_without_typing() -> Result<(), ParseError<'static>> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:predicates (bar) (baz) (quux)))",
+    )?;
+
+    let bar = &d.predicates[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![]);
+
+    let baz = &d.predicates[1];
+    assert_eq!(baz.id, 1);
+    assert_eq!(baz.name, "baz");
+    assert_eq!(baz.params, vec![]);
+
+    let quux = &d.predicates[2];
+    assert_eq!(quux.id, 2);
+    assert_eq!(quux.name, "quux");
+    assert_eq!(quux.params, vec![]);
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_predicates() -> Result<(), ParseError<'static>> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - object)
+                        (baz ?a ?b - sphere ?c -block)
+                        (quux ?a - square ?b ?c - (either block square))))",
+    )?;
+
+    let bar = &d.predicates[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![Param(vec![0])]);
+
+    let baz = &d.predicates[1];
+    assert_eq!(baz.id, 1);
+    assert_eq!(baz.name, "baz");
+    assert_eq!(
+        baz.params,
+        vec![Param(vec![3]), Param(vec![3]), Param(vec![1])]
+    );
+
+    let quux = &d.predicates[2];
+    assert_eq!(quux.id, 2);
+    assert_eq!(quux.name, "quux");
+    assert_eq!(
+        quux.params,
+        vec![Param(vec![2]), Param(vec![1, 2]), Param(vec![1, 2])]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn parse_predicates_fails_with_type_not_defined() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - object)
+                        (baz ?a ?b - sphere ?c - bloc)
+                        (quux ?a - square ?b ?c - (either block square))))",
+    );
+
+    if let Err(e) = d {
+        if let ParseErrorType::TypeNotDefined(t) = e.what {
+            assert_eq!(t, "bloc");
+            return;
+        }
+    }
+    panic!("Type defined error not returned");
+}
+
+#[test]
+fn parse_predicates_fails_with_type_not_defined_2() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - object)
+                        (baz ?a ?b - sphere ?c - block)
+                        (quux ?a - square ?b ?c - (either block shape))))",
+    );
+
+    if let Err(e) = d {
+        if let ParseErrorType::TypeNotDefined(t) = e.what {
+            assert_eq!(t, "shape");
+            return;
+        }
+    }
+    panic!("Type defined error not returned");
+}
+
+#[test]
+fn parse_predicates_fails_when_typing_not_declared() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:types block square sphere)
+           (:predicates (bar ?a - object)
+                        (baz ?a ?b - sphere ?c - block)
+                        (quux ?a - square ?b ?c - (either block square))))",
+    );
+
+    if let Err(e) = d {
+        if let ParseErrorType::MissingRequirement { req, what: _ } = e.what {
+            assert_eq!(req, Requirement::Typing);
+            return;
+        }
+    }
+    panic!("Missing :types requirement error not returned");
 }

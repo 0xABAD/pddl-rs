@@ -3,7 +3,8 @@ use std::{error, fmt};
 
 use crate::tokens::{Token, TokenError, TokenType, Tokenizer};
 
-type TypeId = usize;
+pub type TypeId = usize;
+pub type PredId = usize;
 
 /// `Domain` represents the final output from parsing the contents
 /// representing some PDDL domain.
@@ -11,8 +12,9 @@ pub struct Domain<'a> {
     /// The parsed domain name.
     pub name: &'a str,
 
-    reqs: u32,    // Parsed (:requirements) as a bit vector.
-    types: Types, // Parsed (:types).
+    reqs: u32,                  // Parsed (:requirements) as a bit vector.
+    types: Types,               // Parsed (:types).
+    predicates: Vec<Predicate>, // Parsed (:predicates) ordered by PredId.
 }
 
 impl<'a> Domain<'a> {
@@ -32,12 +34,25 @@ impl<'a> Domain<'a> {
     /// within `contents.`  Returns a `ParseError` if any syntax or semantic
     /// error is encountered.
     pub fn parse(contents: &str) -> Result<Domain, ParseError> {
-        let mut dp = DomainParser::new(contents);
-        dp.top_level().map(|pr| Domain {
-            name: pr.name,
-            reqs: pr.reqs,
-            types: pr.types,
-        })
+        let mut top = DomainParser::new(contents);
+        let tr = top.top_level()?;
+
+        let mut dom = Domain {
+            name: tr.name,
+            reqs: tr.reqs,
+            types: tr.types,
+            predicates: vec![],
+        };
+
+        if tr.pred_loc != Token::default() {
+            let p_source = &contents[tr.pred_loc.pos..];
+            let mut dp = DomainParser::with_offset(p_source, tr.pred_loc.col, tr.pred_loc.line);
+
+            dp.reqs = dom.reqs;
+            dom.predicates = dp.predicates(&dom.types)?.predicates;
+        }
+
+        Ok(dom)
     }
 
     /// `has_requirement` returns true if this `Domain` has the requirement
@@ -189,6 +204,26 @@ impl fmt::Display for Requirement {
     }
 }
 
+/// `Predicate` represents a predicate definition that is found
+/// within the `:predicates` section of a PDDL domain.
+#[derive(Debug)]
+pub struct Predicate {
+    /// A unique assigned ID for the predicate.
+    pub id: PredId,
+    /// Predicates name in lowercase form.
+    pub name: String,
+    /// The predicates parameters.
+    pub params: Vec<Param>,
+}
+
+/// `Param` is a parsed parameter that can be found within various
+/// constructs of a PDDL domain (e.g. within a predicate or function
+/// definition, or within an :action or :durative-action).  The
+/// parameter maintains its list of immediate `TypeId`s, that the
+/// parameter may be.
+#[derive(Debug, PartialEq)]
+pub struct Param(Vec<TypeId>);
+
 /// `expect!` provides a concise way of returning a `ParseError` from
 /// a given `Token` and arbitrary number of arguments that represent the
 /// expected tokens.
@@ -231,6 +266,7 @@ struct DomainParser<'a> {
     contents: &'a str,         // Source contents that will be parsed.
     tokenizer: Tokenizer<'a>,  // Scans contents.
     last_token: Option<Token>, // Last scanned token that hasn't been consumed.
+    reqs: u32,                 // Parsed :requirements.
 }
 
 impl<'a> DomainParser<'a> {
@@ -241,7 +277,30 @@ impl<'a> DomainParser<'a> {
             contents: source,
             tokenizer: Tokenizer::new(source),
             last_token: None,
+            reqs: 0,
         };
+    }
+
+    /// `with_offset` returns a `DomainParser` that starts at `column` and `line`, and
+    /// assumes that `source` is offset at this position.  This allows the parsing
+    /// to begin a specific place that was determined by the `top_level`.
+    fn with_offset(source: &'a str, column: usize, line: usize) -> DomainParser<'a> {
+        return DomainParser {
+            contents: source,
+            tokenizer: Tokenizer::with_offset(source, column, line),
+            last_token: None,
+            reqs: 0,
+        };
+    }
+
+    /// `has_requirement` returns true if this `DomainParser` has the requirement
+    /// of `r`.
+    fn has_requirement(&self, r: Requirement) -> bool {
+        let b = self.reqs & (1 << r.index());
+        if r == Requirement::Strips {
+            return self.reqs == 0 || b > 0;
+        }
+        b > 0
     }
 
     /// `token_str` returns the string form of the `Token`, `t`.
@@ -319,7 +378,7 @@ impl<'a> DomainParser<'a> {
             if top_keys.len() == 6 {
                 top_keys = &top_keys[0..5];
                 if self.next_keyword_is(TOP_LEVEL_KEYWORDS[5]) {
-                    result.predicates = self.balance_parens()?;
+                    result.pred_loc = self.balance_parens()?;
                     self.check_next_token_is_one_of(&PARENS)?;
                     continue;
                 }
@@ -328,7 +387,7 @@ impl<'a> DomainParser<'a> {
             if top_keys.len() == 5 {
                 top_keys = &top_keys[0..4];
                 if self.next_keyword_is(TOP_LEVEL_KEYWORDS[4]) {
-                    result.functions = self.balance_parens()?;
+                    result.func_loc = self.balance_parens()?;
                     self.check_next_token_is_one_of(&PARENS)?;
                     continue;
                 }
@@ -680,7 +739,7 @@ impl<'a> DomainParser<'a> {
                     return Err(ParseError::semantic(
                         tok.line,
                         tok.col,
-                        "object declared as a derived type".to_string(),
+                        "object declared as a derived type",
                     ));
                 }
 
@@ -695,7 +754,7 @@ impl<'a> DomainParser<'a> {
                             return Err(ParseError::semantic(
                                 tok.line,
                                 tok.col,
-                                "object declared as a derived type".to_string(),
+                                "object declared as a derived type",
                             ));
                         }
                         siblings.push(ptypes.insert(s));
@@ -785,6 +844,156 @@ impl<'a> DomainParser<'a> {
             tok = next()?;
         }
     }
+
+    /// `predicates` parses the `:predicates` section of a PDDL domain.
+    fn predicates(&mut self, types: &Types) -> Result<ParseResult, ParseError<'a>> {
+        let mut result = ParseResult::with_name("");
+        let mut pred_id = 0;
+
+        let af = self.atomic_formula(types)?;
+        result.predicates.push(Predicate {
+            id: pred_id,
+            name: af.name,
+            params: af.params,
+        });
+        pred_id += 1;
+
+        loop {
+            self.check_next_token_is_one_of(&[TokenType::LParen, TokenType::RParen])?;
+            if let Some(t) = self.last_token {
+                if t.what != TokenType::LParen {
+                    break;
+                }
+            }
+            let af = self.atomic_formula(types)?;
+            result.predicates.push(Predicate {
+                id: pred_id,
+                name: af.name,
+                params: af.params,
+            });
+            pred_id += 1;
+        }
+
+        self.consume(TokenType::RParen)?;
+        Ok(result)
+    }
+
+    /// `atomic_formula` parses the predicate or function signature
+    /// found in either the :predicates or :functions section of the
+    /// PDDL domain.
+    fn atomic_formula(&mut self, types: &Types) -> Result<AtomicFormula, ParseError<'a>> {
+        self.consume(TokenType::LParen)?;
+
+        let mut af = AtomicFormula {
+            name: self.consume_ident()?.to_string(),
+            params: vec![],
+        };
+        // This marks the beginning of variable names that have
+        // been parsed.  After the type(s) have been parsed it
+        // should be set to the position of where the next variable
+        // in the parameter list begins.  Every parameter from this
+        // position to the end of af.params will have whatever type
+        // IDs appended to their ID list.
+        let mut var_begin = 0;
+
+        'variables: loop {
+            let tok = next_token!(self, "variable", ")")?;
+
+            if tok.what == TokenType::RParen {
+                return Ok(af);
+            } else if let TokenType::Variable(_, _) = tok.what {
+                af.params.push(Param(vec![]));
+
+                'types: loop {
+                    let tok = next_token!(self, "variable", "-", ")")?;
+
+                    if let TokenType::Variable(_, _) = tok.what {
+                        af.params.push(Param(vec![]));
+                    } else if tok.what == TokenType::RParen {
+                        // No more variables, we're done.
+                        return Ok(af);
+                    } else if tok.what == TokenType::Minus {
+                        // Reached type declaration, collect single or multiple
+                        // (i.e. "either") types if and only if the :typing
+                        // requirement has been specified.
+                        if !self.has_requirement(Requirement::Typing) {
+                            return Err(ParseError::missing(
+                                tok.line,
+                                tok.col,
+                                Requirement::Typing,
+                                ":types",
+                            ));
+                        }
+
+                        let tok = next_token!(self, "identifier", "(")?;
+
+                        if let TokenType::Ident(_, _) = tok.what {
+                            // single type
+                            let name = self.token_str(&tok);
+                            if let Some(tid) = types.get(name) {
+                                for i in var_begin..af.params.len() {
+                                    af.params[i].0.push(tid);
+                                }
+                            } else {
+                                return Err(ParseError::type_not_defined(tok.line, tok.col, name));
+                            }
+
+                            var_begin = af.params.len();
+                            break 'types;
+                        } else if tok.what == TokenType::LParen {
+                            // Multiple types.
+                            self.specific_ident("either")?;
+
+                            // Must have at least one type.
+                            let name = self.consume_ident()?;
+                            if let Some(tid) = types.get(name) {
+                                for i in var_begin..af.params.len() {
+                                    af.params[i].0.push(tid);
+                                }
+                            } else {
+                                return Err(ParseError::type_not_defined(tok.line, tok.col, name));
+                            }
+
+                            // Get the rest of the either types.
+                            'either_types: loop {
+                                let t = next_token!(self, "identifier", ")")?;
+                                if let TokenType::Ident(_, _) = t.what {
+                                    let name = self.token_str(&t);
+                                    if let Some(tid) = types.get(name) {
+                                        for i in var_begin..af.params.len() {
+                                            af.params[i].0.push(tid);
+                                        }
+                                    } else {
+                                        return Err(ParseError::type_not_defined(
+                                            tok.line, tok.col, name,
+                                        ));
+                                    }
+                                } else if t.what == TokenType::RParen {
+                                    break 'either_types;
+                                } else {
+                                    return expect!(self, tok, "identifier", ")");
+                                }
+                            }
+
+                            var_begin = af.params.len();
+                            break 'types;
+                        } else {
+                            return expect!(self, tok, "identifier", "(");
+                        }
+                    } else {
+                        return expect!(self, tok, "identifier", "-", ")");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `AtomicFormula` encapsulates the parsed result of a predicate or
+/// function declaration (i.e. '(foo ?a ?b - object ?c - (either bar baz))' ).
+struct AtomicFormula {
+    name: String,       // Name of the predicate or function (e.g. 'foo').
+    params: Vec<Param>, // Parameters of the declaration (e.g. '?a', '?b', etc.).
 }
 
 /// `Types` is the collection of all types found from `:types` section
@@ -809,6 +1018,13 @@ impl Default for Types {
 }
 
 impl Types {
+    /// `get` returns the `TypeId` of the lowercase form of `name`
+    /// if it exists.
+    fn get(&self, name: &str) -> Option<TypeId> {
+        let n = name.to_ascii_lowercase();
+        self.types.get(&n).map(|&id| id)
+    }
+
     /// `insert` inserts `s` and assigns it a `TypeId` if it hasn't already
     /// been seen.
     fn insert(&mut self, s: &str) -> TypeId {
@@ -843,7 +1059,7 @@ impl Types {
                 return Err(ParseError::semantic(
                     line,
                     col,
-                    format!("{} has circular inherintance", name),
+                    &format!("{} has circular inherintance", name),
                 ));
             }
         }
@@ -893,16 +1109,17 @@ impl Types {
 /// methods of a `DomainParser`.
 #[derive(Debug)]
 struct ParseResult<'a> {
-    name: &'a str,         // Name of a domain.
-    reqs: u32,             // Requirements of the domain represented as bit vector.
-    types: Types,          // Types extracted from the domain.
-    constants: Token,      // Token within the PDDL source where constants are located.
-    predicates: Token,     // Token within the PDDL source where predicates are located.
-    functions: Token,      // Token within the PDDL source where functions are located.
-    constraints: Token,    // Token within the PDDL source where constraints are located.
-    actions: Vec<Token>,   // Tokens where :actions begin in the PDDL source.
-    duratives: Vec<Token>, // Tokens where :durative-actions begin in the PDDL source.
-    deriveds: Vec<Token>,  // Tokens where :derived functions begin in the PDDL source.
+    name: &'a str,              // Name of a domain.
+    reqs: u32,                  // Requirements of the domain represented as bit vector.
+    types: Types,               // Types extracted from the domain.
+    constants: Token,           // Token within the PDDL source where constants are located.
+    pred_loc: Token,            // Token within the PDDL source where predicates are located.
+    func_loc: Token,            // Token within the PDDL source where functions are located.
+    constraints: Token,         // Token within the PDDL source where constraints are located.
+    actions: Vec<Token>,        // Tokens where :actions begin in the PDDL source.
+    duratives: Vec<Token>,      // Tokens where :durative-actions begin in the PDDL source.
+    deriveds: Vec<Token>,       // Tokens where :derived functions begin in the PDDL source.
+    predicates: Vec<Predicate>, // Parsed predicate declarations.
 }
 
 impl<'a> ParseResult<'a> {
@@ -913,13 +1130,14 @@ impl<'a> ParseResult<'a> {
             name,
             reqs: 0,
             types: Types::default(),
-            constants: Token::new(TokenType::LParen, 0, 0, 0),
-            predicates: Token::new(TokenType::LParen, 0, 0, 0),
-            functions: Token::new(TokenType::LParen, 0, 0, 0),
-            constraints: Token::new(TokenType::LParen, 0, 0, 0),
+            constants: Token::default(),
+            pred_loc: Token::default(),
+            func_loc: Token::default(),
+            constraints: Token::default(),
             actions: vec![],
             duratives: vec![],
             deriveds: vec![],
+            predicates: vec![],
         }
     }
 
@@ -994,9 +1212,20 @@ impl<'a> ParseError<'a> {
 
     /// `semantic` returns a `ParseError` that represents some semantic
     /// error in the PDDL language (i.e. predicate not defined).
-    fn semantic(line: usize, col: usize, what: String) -> ParseError<'a> {
+    fn semantic(line: usize, col: usize, what: &str) -> ParseError<'a> {
         ParseError {
-            what: ParseErrorType::SemanticError(what),
+            what: ParseErrorType::SemanticError(what.to_string()),
+            line,
+            col,
+        }
+    }
+
+    /// `type_not_defined` returns a `ParseError` where `what` was declared
+    /// as a type but wasn't defined within the `:types` section of the
+    /// PDDL domain.
+    fn type_not_defined(line: usize, col: usize, what: &str) -> ParseError<'a> {
+        ParseError {
+            what: ParseErrorType::TypeNotDefined(what.to_string()),
             line,
             col,
         }
@@ -1028,6 +1257,8 @@ pub enum ParseErrorType<'a> {
     MissingRequirement { req: Requirement, what: &'a str },
     /// Signals a semantic error that has occurred.
     SemanticError(String),
+    /// A type declared was not defined within the :types section.
+    TypeNotDefined(String),
 }
 
 impl<'a> fmt::Display for ParseErrorType<'a> {
@@ -1055,6 +1286,9 @@ impl<'a> fmt::Display for ParseErrorType<'a> {
                 "{} requires {} declaration in :requirements section",
                 what, req
             ),
+            ParseErrorType::TypeNotDefined(t) => {
+                write!(f, "Type, {}, is not defined within :types", t)
+            }
         }
     }
 }
