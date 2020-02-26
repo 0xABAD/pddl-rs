@@ -5,6 +5,7 @@ use crate::tokens::{Token, TokenError, TokenType, Tokenizer};
 
 pub type TypeId = usize;
 pub type PredId = usize;
+pub type FuncId = usize;
 
 /// `Domain` represents the final output from parsing the contents
 /// representing some PDDL domain.
@@ -15,6 +16,7 @@ pub struct Domain<'a> {
     reqs: u32,                  // Parsed (:requirements) as a bit vector.
     types: Types,               // Parsed (:types).
     predicates: Vec<Predicate>, // Parsed (:predicates) ordered by PredId.
+    functions: Vec<Function>,   // Parsed (:functions) ordered by FuncId.
 }
 
 impl<'a> Domain<'a> {
@@ -42,14 +44,25 @@ impl<'a> Domain<'a> {
             reqs: tr.reqs,
             types: tr.types,
             predicates: vec![],
+            functions: vec![],
         };
 
         if tr.pred_loc != Token::default() {
-            let p_source = &contents[tr.pred_loc.pos..];
-            let mut dp = DomainParser::with_offset(p_source, tr.pred_loc.col, tr.pred_loc.line);
+            let loc = tr.pred_loc;
+            let src = &contents[loc.pos..];
+            let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
 
             dp.reqs = dom.reqs;
             dom.predicates = dp.predicates(&dom.types)?.predicates;
+        }
+
+        if tr.func_loc != Token::default() {
+            let loc = tr.func_loc;
+            let src = &contents[loc.pos..];
+            let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
+
+            dp.reqs = dom.reqs;
+            dom.functions = dp.functions(&dom.types)?.functions;
         }
 
         Ok(dom)
@@ -210,10 +223,25 @@ impl fmt::Display for Requirement {
 pub struct Predicate {
     /// A unique assigned ID for the predicate.
     pub id: PredId,
-    /// Predicates name in lowercase form.
+    /// Predicate's name in lowercase form.
     pub name: String,
-    /// The predicates parameters.
+    /// Predicate's parameters.
     pub params: Vec<Param>,
+}
+
+/// `Function` represents a predicate definition that is found
+/// within the `:predicates` section of a PDDL domain.
+#[derive(Debug)]
+pub struct Function {
+    /// A unique assigned ID for the predicate.
+    pub id: PredId,
+    /// Function's name in lowercase form.
+    pub name: String,
+    /// The function's parameters.
+    pub params: Vec<Param>,
+    /// Return types of the function.  If empty then the
+    /// return type is number.
+    pub return_types: Vec<TypeId>,
 }
 
 /// `Param` is a parsed parameter that can be found within various
@@ -613,10 +641,7 @@ impl<'a> DomainParser<'a> {
             tok = t
         } else {
             tok = self.tokenizer.next().or_else(|e| {
-                let mut v = Vec::new();
-                for &w in words {
-                    v.push(w);
-                }
+                let v = words.to_vec();
                 Err(ParseError::from_token_error(e, self.contents, v))
             })?;
             self.last_token = Some(tok);
@@ -630,8 +655,42 @@ impl<'a> DomainParser<'a> {
             }
         }
 
-        let v = words.iter().map(|&w| w).collect();
+        let v = words.to_vec();
         let s = tok.to_str(self.contents);
+        Err(ParseError::expect(tok.line, tok.col, s, v))
+    }
+
+    /// `check_next_is_one_of_or_ident` is like `check_next_is_one_of` but
+    /// also succeeds if the next token is an identifier or matches one of
+    /// `words`.  Returns the token on success.
+    fn check_next_is_one_of_or_ident(&mut self, words: &[&'a str]) -> Result<Token, ParseError> {
+        let tok: Token;
+
+        if let Some(t) = self.last_token {
+            tok = t
+        } else {
+            tok = self.tokenizer.next().or_else(|e| {
+                let mut v = words.to_vec();
+                v.push("identifier");
+                Err(ParseError::from_token_error(e, self.contents, v))
+            })?;
+            self.last_token = Some(tok);
+        }
+
+        if tok.is_ident() {
+            return Ok(tok);
+        }
+        for i in 0..words.len() {
+            let w = words[i];
+            let s = tok.to_str(self.contents);
+            if s.eq_ignore_ascii_case(w) {
+                return Ok(tok);
+            }
+        }
+
+        let s = tok.to_str(self.contents);
+        let mut v = words.to_vec();
+        v.push("identifier");
         Err(ParseError::expect(tok.line, tok.col, s, v))
     }
 
@@ -889,6 +948,105 @@ impl<'a> DomainParser<'a> {
         Ok(result)
     }
 
+    fn functions(&mut self, types: &Types) -> Result<ParseResult, ParseError> {
+        let mut func_id = 0;
+        let mut fn_begin = 0;
+        let mut funcs = Vec::<Function>::new();
+        let mut parsed_types = false;
+
+        loop {
+            let af = self.atomic_formula(types)?;
+
+            funcs.push(Function {
+                id: func_id,
+                name: af.name,
+                params: af.params,
+                return_types: vec![],
+            });
+            func_id += 1;
+
+            self.check_next_token_is_one_of(&[
+                TokenType::Minus,
+                TokenType::LParen,
+                TokenType::RParen,
+            ])?;
+
+            if self.next_token_is(TokenType::RParen) {
+                let tok = self.consume(TokenType::RParen)?;
+
+                let mut result = ParseResult::with_name("");
+                result.functions = funcs;
+
+                // If one or more functions isn't followed by a '-' to specify
+                // the return type then it is implied that the return type is
+                // 'number'.
+                if !parsed_types && !self.has_requirement(Requirement::NumericFluents) {
+                    return Err(ParseError::missing(
+                        tok.line,
+                        tok.col,
+                        Requirement::NumericFluents,
+                        "function(s)",
+                    ));
+                }
+
+                return Ok(result);
+            } else if self.next_token_is(TokenType::Minus) {
+                parsed_types = true;
+
+                let tok = self.check_next_is_one_of_or_ident(&["number", "("])?;
+                let src = self.contents;
+
+                if tok.to_str(src).eq_ignore_ascii_case("number") {
+                    if !self.has_requirement(Requirement::NumericFluents) {
+                        return Err(ParseError::missing(
+                            tok.line,
+                            tok.col,
+                            Requirement::NumericFluents,
+                            "function(s)",
+                        ));
+                    }
+                    self.specific_ident("number")?;
+                    fn_begin = funcs.len();
+                    continue;
+                }
+
+                if !self.has_requirement(Requirement::Typing) {
+                    return Err(ParseError::missing(
+                        tok.line,
+                        tok.col,
+                        Requirement::Typing,
+                        "function(s)",
+                    ));
+                }
+
+                if !self.has_requirement(Requirement::ObjectFluents) {
+                    return Err(ParseError::missing(
+                        tok.line,
+                        tok.col,
+                        Requirement::ObjectFluents,
+                        "function(s)",
+                    ));
+                }
+
+                self.type_declarations(|t| {
+                    let name = t.to_str(src);
+                    if let Some(tid) = types.get(name) {
+                        for i in fn_begin..funcs.len() {
+                            funcs[i].return_types.push(tid);
+                        }
+                        return Ok(());
+                    }
+                    Err(ParseError::type_not_defined(t.line, t.col, name))
+                })?;
+
+                fn_begin = funcs.len();
+            } else {
+                // Next token is a left paren thus another function.
+                parsed_types = false;
+            }
+        }
+    }
+
     /// `atomic_formula` parses the predicate or function signature
     /// found in either the :predicates or :functions section of the
     /// PDDL domain.
@@ -937,9 +1095,9 @@ impl<'a> DomainParser<'a> {
                             ));
                         }
 
-                        let source = self.contents;
+                        let src = self.contents;
                         self.type_declarations(|t| {
-                            let name = t.to_str(source);
+                            let name = t.to_str(src);
                             if let Some(tid) = types.get(name) {
                                 for i in var_begin..af.params.len() {
                                     af.params[i].0.push(tid);
@@ -1066,6 +1224,7 @@ struct ParseResult<'a> {
     duratives: Vec<Token>,      // Tokens where :durative-actions begin in the PDDL source.
     deriveds: Vec<Token>,       // Tokens where :derived functions begin in the PDDL source.
     predicates: Vec<Predicate>, // Parsed predicate declarations.
+    functions: Vec<Function>,   // Parsed function declarations.
 }
 
 impl<'a> ParseResult<'a> {
@@ -1084,6 +1243,7 @@ impl<'a> ParseResult<'a> {
             duratives: vec![],
             deriveds: vec![],
             predicates: vec![],
+            functions: vec![],
         }
     }
 
