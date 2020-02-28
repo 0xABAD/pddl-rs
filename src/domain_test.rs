@@ -498,6 +498,43 @@ fn can_parse_predicates() -> Result<(), ParseError> {
 }
 
 #[test]
+fn predicates_collect_either_types() -> Result<(), ParseError> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - object ?b - sphere)
+                        (bar ?a - square ?b - square)
+                        (bar ?a - block ?b - sphere)))",
+    )?;
+
+    let bar = &d.predicates[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![Param(vec![0, 1, 2]), Param(vec![2, 3])]);
+
+    Ok(())
+}
+
+#[test]
+fn collected_predicates_fail_with_mismatching_arity() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - object)
+                        (bar ?a - block ?b - object)))",
+    );
+    if let Err(e) = d {
+        if let ParseErrorType::SemanticError(s) = e.what {
+            assert_eq!(s, "bar already declared or has mis-matching arity");
+            return;
+        }
+    }
+    panic!("Mis-matching arity error not returned");
+}
+
+#[test]
 fn parse_predicates_fails_with_type_not_defined() {
     let d = Domain::parse(
         "(define (domain foo)

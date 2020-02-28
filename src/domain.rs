@@ -588,16 +588,22 @@ impl<'a> DomainParser<'a> {
             })
     }
 
-    /// `consume_ident` consumes the next token that needs to be an
-    /// identifier and returns the string form of that identifier.
-    fn consume_ident(&mut self) -> Result<&'a str, ParseError> {
+    /// `next_ident` consumes the next token that needs to be an
+    /// identifier and returns the token of that identifier.
+    fn next_ident(&mut self) -> Result<Token, ParseError> {
         self.expect_next("identifier").and_then(|tok| {
             if tok.is_ident() {
-                Ok(tok.to_str(self.contents))
+                Ok(tok)
             } else {
                 expect!(self, tok, "identifier")
             }
         })
+    }
+
+    /// `consume_ident` consumes the next token that needs to be an
+    /// identifier and returns the string form of that identifier.
+    fn consume_ident(&mut self) -> Result<&'a str, ParseError> {
+        self.next_ident().map(|t| t.to_str(self.contents))
     }
 
     /// `check_next_token_is_one_of` checks to see if the next token is
@@ -919,6 +925,7 @@ impl<'a> DomainParser<'a> {
     fn predicates(&mut self, types: &Types) -> Result<ParseResult, ParseError> {
         let mut result = ParseResult::with_name("");
         let mut pred_id = 0;
+        let mut pred_map: HashMap<String, PredId> = HashMap::new();
 
         let af = self.atomic_formula(types)?;
         result.predicates.push(Predicate {
@@ -926,6 +933,10 @@ impl<'a> DomainParser<'a> {
             name: af.name,
             params: af.params,
         });
+        pred_map.insert(
+            result.predicates[pred_id].name.to_ascii_lowercase(),
+            pred_id,
+        );
         pred_id += 1;
 
         loop {
@@ -935,13 +946,28 @@ impl<'a> DomainParser<'a> {
                     break;
                 }
             }
+
             let af = self.atomic_formula(types)?;
-            result.predicates.push(Predicate {
-                id: pred_id,
-                name: af.name,
-                params: af.params,
-            });
-            pred_id += 1;
+            if let Some(&id) = pred_map.get(&af.name.to_ascii_lowercase()) {
+                if af.params.len() != result.predicates[id].params.len() {
+                    let n = af.token.to_str(self.contents);
+                    let s = format!("{} already declared or has mis-matching arity", n);
+                    return Err(self.semantic(&af.token, &s));
+                }
+                for i in 0..af.params.len() {
+                    let p = &af.params[i];
+                    result.predicates[id].params[i].0.extend_from_slice(&p.0);
+                    result.predicates[id].params[i].0.sort();
+                    result.predicates[id].params[i].0.dedup();
+                }
+            } else {
+                result.predicates.push(Predicate {
+                    id: pred_id,
+                    name: af.name,
+                    params: af.params,
+                });
+                pred_id += 1;
+            }
         }
 
         self.consume(TokenType::RParen)?;
@@ -1053,8 +1079,10 @@ impl<'a> DomainParser<'a> {
     fn atomic_formula(&mut self, types: &Types) -> Result<AtomicFormula, ParseError> {
         self.consume(TokenType::LParen)?;
 
+        let ident = self.next_ident()?;
         let mut af = AtomicFormula {
-            name: self.consume_ident()?.to_string(),
+            name: ident.to_str(self.contents).to_string(),
+            token: ident,
             params: vec![],
         };
         // This marks the beginning of variable names that have
@@ -1122,6 +1150,7 @@ impl<'a> DomainParser<'a> {
 /// function declaration (i.e. '(foo ?a ?b - object ?c - (either bar baz))' ).
 struct AtomicFormula {
     name: String,       // Name of the predicate or function (e.g. 'foo').
+    token: Token,       // Token of where the name was scanned.
     params: Vec<Param>, // Parameters of the declaration (e.g. '?a', '?b', etc.).
 }
 
