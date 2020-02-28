@@ -613,12 +613,14 @@ fn can_parse_functions() -> Result<(), ParseError> {
     assert_eq!(bar.name, "bar");
     assert_eq!(bar.params, vec![Param(vec![0])]);
     assert_eq!(bar.return_types, vec![]);
+    assert!(bar.returns_number);
 
     let bar2 = &d.functions[1];
     assert_eq!(bar2.id, 1);
     assert_eq!(bar2.name, "bar2");
     assert_eq!(bar2.params, vec![Param(vec![0])]);
     assert_eq!(bar2.return_types, vec![]);
+    assert!(bar2.returns_number);
 
     let baz = &d.functions[2];
     assert_eq!(baz.id, 2);
@@ -628,6 +630,7 @@ fn can_parse_functions() -> Result<(), ParseError> {
         vec![Param(vec![3]), Param(vec![3]), Param(vec![1])]
     );
     assert_eq!(baz.return_types, vec![3, 1]);
+    assert!(!baz.returns_number);
 
     let quux = &d.functions[3];
     assert_eq!(quux.id, 3);
@@ -637,18 +640,21 @@ fn can_parse_functions() -> Result<(), ParseError> {
         vec![Param(vec![2]), Param(vec![1, 2]), Param(vec![1, 2])]
     );
     assert_eq!(quux.return_types, vec![0]);
+    assert!(!baz.returns_number);
 
     let bar3 = &d.functions[4];
     assert_eq!(bar3.id, 4);
     assert_eq!(bar3.name, "bar3");
     assert_eq!(bar3.params, vec![]);
     assert_eq!(bar3.return_types, vec![]);
+    assert!(bar3.returns_number);
 
     let bar4 = &d.functions[5];
     assert_eq!(bar4.id, 5);
     assert_eq!(bar4.name, "bar4");
     assert_eq!(bar4.params, vec![]);
     assert_eq!(bar4.return_types, vec![]);
+    assert!(bar4.returns_number);
 
     Ok(())
 }

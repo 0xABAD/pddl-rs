@@ -239,9 +239,10 @@ pub struct Function {
     pub name: String,
     /// The function's parameters.
     pub params: Vec<Param>,
-    /// Return types of the function.  If empty then the
-    /// return type is number.
+    /// Return types of the function.
     pub return_types: Vec<TypeId>,
+    /// True if the function returns a number.
+    pub returns_number: bool,
 }
 
 /// `Param` is a parsed parameter that can be found within various
@@ -988,6 +989,7 @@ impl<'a> DomainParser<'a> {
                 name: af.name,
                 params: af.params,
                 return_types: vec![],
+                returns_number: false,
             });
             func_id += 1;
 
@@ -999,6 +1001,10 @@ impl<'a> DomainParser<'a> {
 
             if self.next_token_is(TokenType::RParen) {
                 let tok = self.consume(TokenType::RParen)?;
+
+                for i in fn_begin..funcs.len() {
+                    funcs[i].returns_number = true;
+                }
 
                 let mut result = ParseResult::with_name("");
                 result.functions = funcs;
@@ -1032,6 +1038,9 @@ impl<'a> DomainParser<'a> {
                         ));
                     }
                     self.specific_ident("number")?;
+                    for i in fn_begin..funcs.len() {
+                        funcs[i].returns_number = true;
+                    }
                     fn_begin = funcs.len();
                     continue;
                 }
