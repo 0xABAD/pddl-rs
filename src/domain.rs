@@ -977,21 +977,35 @@ impl<'a> DomainParser<'a> {
 
     fn functions(&mut self, types: &Types) -> Result<ParseResult, ParseError> {
         let mut func_id = 0;
-        let mut fn_begin = 0;
         let mut funcs = Vec::<Function>::new();
+        let mut func_ids = Vec::<FuncId>::new();
+        let mut func_map: HashMap<String, FuncId> = HashMap::new();
         let mut parsed_types = false;
 
         loop {
             let af = self.atomic_formula(types)?;
+            let name = af.name.to_ascii_lowercase();
 
-            funcs.push(Function {
-                id: func_id,
-                name: af.name,
-                params: af.params,
-                return_types: vec![],
-                returns_number: false,
-            });
-            func_id += 1;
+            if let Some(&id) = func_map.get(&name) {
+                func_ids.push(id);
+                for i in 0..af.params.len() {
+                    let p = &af.params[i];
+                    funcs[id].params[i].0.extend_from_slice(&p.0);
+                    funcs[id].params[i].0.sort();
+                    funcs[id].params[i].0.dedup();
+                }
+            } else {
+                funcs.push(Function {
+                    id: func_id,
+                    name: af.name,
+                    params: af.params,
+                    return_types: vec![],
+                    returns_number: false,
+                });
+                func_map.insert(name, func_id);
+                func_ids.push(func_id);
+                func_id += 1;
+            }
 
             self.check_next_token_is_one_of(&[
                 TokenType::Minus,
@@ -1002,8 +1016,8 @@ impl<'a> DomainParser<'a> {
             if self.next_token_is(TokenType::RParen) {
                 let tok = self.consume(TokenType::RParen)?;
 
-                for i in fn_begin..funcs.len() {
-                    funcs[i].returns_number = true;
+                for &id in &func_ids {
+                    funcs[id].returns_number = true;
                 }
 
                 let mut result = ParseResult::with_name("");
@@ -1038,10 +1052,11 @@ impl<'a> DomainParser<'a> {
                         ));
                     }
                     self.specific_ident("number")?;
-                    for i in fn_begin..funcs.len() {
-                        funcs[i].returns_number = true;
+
+                    for &id in &func_ids {
+                        funcs[id].returns_number = true;
                     }
-                    fn_begin = funcs.len();
+                    func_ids.clear();
                     continue;
                 }
 
@@ -1066,15 +1081,17 @@ impl<'a> DomainParser<'a> {
                 self.type_declarations(|t| {
                     let name = t.to_str(src);
                     if let Some(tid) = types.get(name) {
-                        for i in fn_begin..funcs.len() {
-                            funcs[i].return_types.push(tid);
+                        for &id in &func_ids {
+                            funcs[id].return_types.push(tid);
+                            funcs[id].return_types.sort();
+                            funcs[id].return_types.dedup();
                         }
                         return Ok(());
                     }
                     Err(ParseError::type_not_defined(t.line, t.col, name))
                 })?;
 
-                fn_begin = funcs.len();
+                func_ids.clear();
             } else {
                 // Next token is a left paren thus another function.
                 parsed_types = false;
