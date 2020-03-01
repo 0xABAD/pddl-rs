@@ -11,7 +11,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             |mut tz| loop {
                 match tz.next() {
                     Ok(_) => continue,
-                    Err(TokenError::EndOfInput) => break,
+                    Err(TokenError::EndOfInput { line: _, col: _ }) => break,
                     Err(e) => panic!("Unexpected error during tokenization: {:#?}", e),
                 }
             },
