@@ -978,6 +978,7 @@ impl<'a> DomainParser<'a> {
         Ok(result)
     }
 
+    /// `functions` parses the `:functions` section of a PDDL domain.
     fn functions(&mut self, types: &Types) -> Result<ParseResult, ParseError> {
         let mut func_id = 0;
         let mut funcs = Vec::<Function>::new();
