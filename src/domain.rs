@@ -999,15 +999,14 @@ impl<'a> DomainParser<'a> {
         result.what = ParsingWhat::Predicates;
 
         let af = self.atomic_formula(types)?;
+        let key = af.lookup_key();
+
         result.predicates.push(Predicate {
             id: pred_id,
             name: af.name,
             params: af.params,
         });
-        pred_map.insert(
-            result.predicates[pred_id].name.to_ascii_lowercase(),
-            pred_id,
-        );
+        pred_map.insert(key, pred_id);
         pred_id += 1;
 
         loop {
@@ -1019,27 +1018,28 @@ impl<'a> DomainParser<'a> {
             }
 
             let af = self.atomic_formula(types)?;
-            let name = af.name.to_ascii_lowercase();
+            let key = af.lookup_key();
+            let mut new_pred = true;
 
-            if let Some(&id) = pred_map.get(&name) {
-                if af.params.len() != result.predicates[id].params.len() {
-                    let n = af.token.to_str(self.contents);
-                    let s = format!("{} already declared or has mis-matching arity", n);
-                    return Err(self.semantic(&af.token, &s));
+            if let Some(&id) = pred_map.get(&key) {
+                if af.params.len() == result.predicates[id].params.len() {
+                    new_pred = false;
+                    for i in 0..af.params.len() {
+                        let p = &af.params[i];
+                        result.predicates[id].params[i].0.extend_from_slice(&p.0);
+                        result.predicates[id].params[i].0.sort();
+                        result.predicates[id].params[i].0.dedup();
+                    }
                 }
-                for i in 0..af.params.len() {
-                    let p = &af.params[i];
-                    result.predicates[id].params[i].0.extend_from_slice(&p.0);
-                    result.predicates[id].params[i].0.sort();
-                    result.predicates[id].params[i].0.dedup();
-                }
-            } else {
+            }
+
+            if new_pred {
                 result.predicates.push(Predicate {
                     id: pred_id,
                     name: af.name,
                     params: af.params,
                 });
-                pred_map.insert(name, pred_id);
+                pred_map.insert(key, pred_id);
                 pred_id += 1;
             }
         }
@@ -1058,17 +1058,23 @@ impl<'a> DomainParser<'a> {
 
         loop {
             let af = self.atomic_formula(types)?;
-            let name = af.name.to_ascii_lowercase();
+            let key = af.lookup_key();
+            let mut new_func = true;
 
-            if let Some(&id) = func_map.get(&name) {
-                func_ids.push(id);
-                for i in 0..af.params.len() {
-                    let p = &af.params[i];
-                    funcs[id].params[i].0.extend_from_slice(&p.0);
-                    funcs[id].params[i].0.sort();
-                    funcs[id].params[i].0.dedup();
+            if let Some(&id) = func_map.get(&key) {
+                if funcs[id].params.len() == af.params.len() {
+                    new_func = false;
+                    func_ids.push(id);
+                    for i in 0..af.params.len() {
+                        let p = &af.params[i];
+                        funcs[id].params[i].0.extend_from_slice(&p.0);
+                        funcs[id].params[i].0.sort();
+                        funcs[id].params[i].0.dedup();
+                    }
                 }
-            } else {
+            }
+
+            if new_func {
                 funcs.push(Function {
                     id: func_id,
                     name: af.name,
@@ -1076,7 +1082,7 @@ impl<'a> DomainParser<'a> {
                     return_types: vec![],
                     returns_number: false,
                 });
-                func_map.insert(name, func_id);
+                func_map.insert(key, func_id);
                 func_ids.push(func_id);
                 func_id += 1;
             }
@@ -1180,10 +1186,9 @@ impl<'a> DomainParser<'a> {
     fn atomic_formula(&mut self, types: &Types) -> Result<AtomicFormula, ParseError> {
         self.consume(TokenType::LParen)?;
 
-        let ident = self.next_ident()?;
+        let ident = self.consume_ident()?;
         let mut af = AtomicFormula {
-            name: ident.to_str(self.contents).to_string(),
-            token: ident,
+            name: ident.to_string(),
             params: vec![],
         };
         // This marks the beginning of variable names that have
@@ -1251,8 +1256,18 @@ impl<'a> DomainParser<'a> {
 /// function declaration (i.e. '(foo ?a ?b - object ?c - (either bar baz))' ).
 struct AtomicFormula {
     name: String,       // Name of the predicate or function (e.g. 'foo').
-    token: Token,       // Token of where the name was scanned.
     params: Vec<Param>, // Parameters of the declaration (e.g. '?a', '?b', etc.).
+}
+
+impl AtomicFormula {
+    /// `lookup_key` returns a key that can be used to see if the AtomicFormula
+    /// has already been declared.  The key will be a combination of the formula's
+    /// name along with its parameter arity and is composed of characters that is
+    /// impossible to be a valid identifier.
+    fn lookup_key(&self) -> String {
+        let name = self.name.to_ascii_lowercase();
+        format!("{}-**-{}-**-", name, self.params.len())
+    }
 }
 
 /// `Types` is the collection of all types found from `:types` section

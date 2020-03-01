@@ -12,7 +12,7 @@
   (:functions
    (power)
    (effort ?x ?y - location)
-   (effort-data ?d - data)
+   (effort ?d - data)
    ) ;; end :functions
 
   ) ;; end (domain rover)

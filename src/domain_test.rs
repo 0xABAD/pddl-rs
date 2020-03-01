@@ -527,21 +527,26 @@ fn predicates_collates_either_types() -> Result<(), ParseError> {
 }
 
 #[test]
-fn collected_predicates_fail_with_mismatching_arity() {
+fn parse_predicates_allow_mismatching_arity() -> Result<(), ParseError> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
            (:types block square sphere)
            (:predicates (bar ?a - object)
-                        (bar ?a - block ?b - object)))",
-    );
-    if let Err(e) = d {
-        if let ParseErrorType::SemanticError(s) = e.what {
-            assert_eq!(s, "bar already declared or has mis-matching arity");
-            return;
-        }
-    }
-    panic!("Mis-matching arity error not returned");
+                        (bar ?a - block ?b - sphere)))",
+    )?;
+
+    let bar = &d.predicates[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![Param(vec![0])]);
+
+    let bar = &d.predicates[1];
+    assert_eq!(bar.id, 1);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![Param(vec![1]), Param(vec![3])]);
+
+    Ok(())
 }
 
 #[test]
@@ -665,6 +670,32 @@ fn can_parse_functions() -> Result<(), ParseError> {
     assert_eq!(bar4.params, vec![]);
     assert_eq!(bar4.return_types, vec![]);
     assert!(bar4.returns_number);
+
+    Ok(())
+}
+
+#[test]
+fn parse_functions_allow_mismatching_arity() -> Result<(), ParseError> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:functions (bar ?a - object ?b - block)
+                       (bar ?a - block ?b - square ?c - sphere)))",
+    )?;
+
+    let bar = &d.functions[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![Param(vec![0]), Param(vec![1])]);
+
+    let bar = &d.functions[1];
+    assert_eq!(bar.id, 1);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(
+        bar.params,
+        vec![Param(vec![1]), Param(vec![2]), Param(vec![3])]
+    );
 
     Ok(())
 }
