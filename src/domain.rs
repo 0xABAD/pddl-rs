@@ -949,7 +949,9 @@ impl<'a> DomainParser<'a> {
             }
 
             let af = self.atomic_formula(types)?;
-            if let Some(&id) = pred_map.get(&af.name.to_ascii_lowercase()) {
+            let name = af.name.to_ascii_lowercase();
+
+            if let Some(&id) = pred_map.get(&name) {
                 if af.params.len() != result.predicates[id].params.len() {
                     let n = af.token.to_str(self.contents);
                     let s = format!("{} already declared or has mis-matching arity", n);
@@ -967,6 +969,7 @@ impl<'a> DomainParser<'a> {
                     name: af.name,
                     params: af.params,
                 });
+                pred_map.insert(name, pred_id);
                 pred_id += 1;
             }
         }

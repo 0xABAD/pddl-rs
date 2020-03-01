@@ -505,13 +505,23 @@ fn predicates_collates_either_types() -> Result<(), ParseError> {
            (:types block square sphere)
            (:predicates (bar ?a - object ?b - sphere)
                         (bar ?a - square ?b - square)
-                        (bar ?a - block ?b - sphere)))",
+                        (fub ?a ?b - object ?c - sphere)
+                        (bar ?a - block ?b - sphere)
+                        (fub ?a - sphere ?b - block ?c - square)))",
     )?;
 
     let bar = &d.predicates[0];
     assert_eq!(bar.id, 0);
     assert_eq!(bar.name, "bar");
     assert_eq!(bar.params, vec![Param(vec![0, 1, 2]), Param(vec![2, 3])]);
+
+    let fub = &d.predicates[1];
+    assert_eq!(fub.id, 1);
+    assert_eq!(fub.name, "fub");
+    assert_eq!(
+        fub.params,
+        vec![Param(vec![0, 3]), Param(vec![0, 1]), Param(vec![2, 3])]
+    );
 
     Ok(())
 }
