@@ -3,6 +3,8 @@ use std::{error, fmt};
 
 use crate::tokens::{Token, TokenError, TokenType, Tokenizer};
 
+use rayon::prelude::*;
+
 pub type TypeId = usize;
 pub type PredId = usize;
 pub type FuncId = usize;
@@ -36,6 +38,62 @@ impl<'a> Domain<'a> {
     /// within `contents.`  Returns a `ParseError` if any syntax or semantic
     /// error is encountered.
     pub fn parse(contents: &str) -> Result<Domain, ParseError> {
+        let mut top = DomainParser::new(contents);
+        let tr = top.top_level()?;
+
+        let mut dom = Domain {
+            name: tr.name,
+            reqs: tr.reqs,
+            types: tr.types,
+            predicates: vec![],
+            functions: vec![],
+        };
+
+        let mut parsers: Vec<DomainParser> = vec![];
+
+        if tr.pred_loc != Token::default() {
+            let loc = tr.pred_loc;
+            let src = &contents[loc.pos..];
+            let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
+
+            dp.reqs = dom.reqs;
+            dp.what = ParsingWhat::Predicates;
+            parsers.push(dp);
+        }
+
+        if tr.func_loc != Token::default() {
+            let loc = tr.func_loc;
+            let src = &contents[loc.pos..];
+            let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
+
+            dp.reqs = dom.reqs;
+            dp.what = ParsingWhat::Functions;
+            parsers.push(dp);
+        }
+
+        let types = &dom.types;
+        let results: Vec<Result<ParseResult, ParseError>> = parsers
+            .par_iter_mut()
+            .map(|dp| match dp.what {
+                ParsingWhat::Predicates => dp.predicates(types),
+                ParsingWhat::Functions => dp.functions(types),
+                _ => panic!("Parsing incorrect contents: {:?}", dp.what),
+            })
+            .collect();
+
+        for result in results {
+            let pr = result?;
+            match pr.what {
+                ParsingWhat::Predicates => dom.predicates = pr.predicates,
+                ParsingWhat::Functions => dom.functions = pr.functions,
+                _ => continue,
+            }
+        }
+
+        Ok(dom)
+    }
+
+    pub fn parse_seq(contents: &str) -> Result<Domain, ParseError> {
         let mut top = DomainParser::new(contents);
         let tr = top.top_level()?;
 
@@ -289,6 +347,13 @@ macro_rules! next_token {
     };
 }
 
+#[derive(Debug)]
+enum ParsingWhat {
+    Any,
+    Functions,
+    Predicates,
+}
+
 /// `DomainParser` maintains the state necessary to parse a portion of
 /// of a PDDL domain.
 struct DomainParser<'a> {
@@ -296,6 +361,7 @@ struct DomainParser<'a> {
     tokenizer: Tokenizer<'a>,  // Scans contents.
     last_token: Option<Token>, // Last scanned token that hasn't been consumed.
     reqs: u32,                 // Parsed :requirements.
+    what: ParsingWhat,         // What is being parsed by the parser.
 }
 
 impl<'a> DomainParser<'a> {
@@ -307,6 +373,7 @@ impl<'a> DomainParser<'a> {
             tokenizer: Tokenizer::new(source),
             last_token: None,
             reqs: 0,
+            what: ParsingWhat::Any,
         };
     }
 
@@ -319,6 +386,7 @@ impl<'a> DomainParser<'a> {
             tokenizer: Tokenizer::with_offset(source, column, line),
             last_token: None,
             reqs: 0,
+            what: ParsingWhat::Any,
         };
     }
 
@@ -928,6 +996,8 @@ impl<'a> DomainParser<'a> {
         let mut pred_id = 0;
         let mut pred_map: HashMap<String, PredId> = HashMap::new();
 
+        result.what = ParsingWhat::Predicates;
+
         let af = self.atomic_formula(types)?;
         result.predicates.push(Predicate {
             id: pred_id,
@@ -1026,6 +1096,7 @@ impl<'a> DomainParser<'a> {
 
                 let mut result = ParseResult::with_name("");
                 result.functions = funcs;
+                result.what = ParsingWhat::Functions;
 
                 // If one or more functions isn't followed by a '-' to specify
                 // the return type then it is implied that the return type is
@@ -1272,6 +1343,7 @@ impl Types {
 /// methods of a `DomainParser`.
 #[derive(Debug)]
 struct ParseResult<'a> {
+    what: ParsingWhat,          // What was parsed by this result.
     name: &'a str,              // Name of a domain.
     reqs: u32,                  // Requirements of the domain represented as bit vector.
     types: Types,               // Types extracted from the domain.
@@ -1292,6 +1364,7 @@ impl<'a> ParseResult<'a> {
     fn with_name(name: &'a str) -> ParseResult<'a> {
         ParseResult {
             name,
+            what: ParsingWhat::Any,
             reqs: 0,
             types: Types::default(),
             constants: Token::default(),
