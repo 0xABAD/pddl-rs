@@ -1186,9 +1186,9 @@ impl<'a> DomainParser<'a> {
     fn atomic_formula(&mut self, types: &Types) -> Result<AtomicFormula, ParseError> {
         self.consume(TokenType::LParen)?;
 
-        let ident = self.consume_ident()?;
+        let ident = self.consume_ident()?.to_ascii_lowercase();
         let mut af = AtomicFormula {
-            name: ident.to_string(),
+            name: ident,
             params: vec![],
         };
         // This marks the beginning of variable names that have
@@ -1265,8 +1265,7 @@ impl AtomicFormula {
     /// name along with its parameter arity and is composed of characters that is
     /// impossible to be a valid identifier.
     fn lookup_key(&self) -> String {
-        let name = self.name.to_ascii_lowercase();
-        format!("{}-**-{}-**-", name, self.params.len())
+        format!("{}-**-{}-**-", self.name, self.params.len())
     }
 }
 
