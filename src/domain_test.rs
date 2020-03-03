@@ -355,9 +355,9 @@ fn correct_constants_from_top_level() -> Result<(), ParseError> {
 (:constants foo bar - item))",
     );
     let pr = dp.top_level()?;
-    assert_eq!(pr.constants.line, 4);
-    assert_eq!(pr.constants.col, 13);
-    assert_eq!(pr.constants.pos, 79);
+    assert_eq!(pr.const_loc.line, 4);
+    assert_eq!(pr.const_loc.col, 13);
+    assert_eq!(pr.const_loc.pos, 79);
     Ok(())
 }
 
@@ -839,4 +839,115 @@ fn parse_functions_fails_when_type_not_defined() {
         }
     }
     panic!("Type defined error not returned");
+}
+
+#[test]
+fn can_parse_constants() -> Result<(), ParseError> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:constants bar fub - block
+                       quux - (either object sphere)
+                       baz))",
+    )?;
+
+    let bar = &d.constants[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.types, vec![1]);
+
+    let fub = &d.constants[1];
+    assert_eq!(fub.id, 1);
+    assert_eq!(fub.name, "fub");
+    assert_eq!(fub.types, vec![1]);
+
+    let quux = &d.constants[2];
+    assert_eq!(quux.id, 2);
+    assert_eq!(quux.name, "quux");
+    assert_eq!(quux.types, vec![0, 3]);
+
+    let baz = &d.constants[3];
+    assert_eq!(baz.id, 3);
+    assert_eq!(baz.name, "baz");
+    assert_eq!(baz.types, vec![]);
+
+    Ok(())
+}
+
+#[test]
+fn allow_parsing_of_empty_constants() -> Result<(), ParseError> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:constants))",
+    )?;
+    assert_eq!(d.constants.len(), 0);
+    Ok(())
+}
+
+#[test]
+fn allow_parsing_constants_without_types() -> Result<(), ParseError> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:constants bar baz))",
+    )?;
+
+    let bar = &d.constants[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.types, vec![]);
+
+    let baz = &d.constants[1];
+    assert_eq!(baz.id, 1);
+    assert_eq!(baz.name, "baz");
+    assert_eq!(baz.types, vec![]);
+
+    Ok(())
+}
+
+#[test]
+fn constants_collates_either_types() -> Result<(), ParseError> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:constants bar - block
+                       fub - sphere
+                       bar - (either object sphere)
+                       fub - square
+                       bar))",
+    )?;
+
+    let bar = &d.constants[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.types, vec![0, 1, 3]);
+
+    let fub = &d.constants[1];
+    assert_eq!(fub.id, 1);
+    assert_eq!(fub.name, "fub");
+    assert_eq!(fub.types, vec![2, 3]);
+
+    Ok(())
+}
+
+#[test]
+fn constants_return_error_when_typing_not_declared() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips )
+           (:types block square sphere)
+           (:constants bar - block))",
+    );
+
+    if let Err(e) = d {
+        if let ParseErrorType::MissingRequirement { req, what: _ } = e.what {
+            assert_eq!(req, Requirement::Typing);
+            return;
+        }
+    }
+    panic!("Missing :types requirement error not returned");
 }

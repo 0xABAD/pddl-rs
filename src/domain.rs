@@ -8,6 +8,7 @@ use rayon::prelude::*;
 pub type TypeId = usize;
 pub type PredId = usize;
 pub type FuncId = usize;
+pub type ConstId = usize;
 
 /// `Domain` represents the final output from parsing the contents
 /// representing some PDDL domain.
@@ -19,6 +20,7 @@ pub struct Domain<'a> {
     types: Types,               // Parsed (:types).
     predicates: Vec<Predicate>, // Parsed (:predicates) ordered by PredId.
     functions: Vec<Function>,   // Parsed (:functions) ordered by FuncId.
+    constants: Vec<Constant>,   // Parsed (:constants) ordered by ConstId.
 }
 
 impl<'a> Domain<'a> {
@@ -47,6 +49,7 @@ impl<'a> Domain<'a> {
             types: tr.types,
             predicates: vec![],
             functions: vec![],
+            constants: vec![],
         };
 
         let mut parsers: Vec<DomainParser> = vec![];
@@ -71,12 +74,23 @@ impl<'a> Domain<'a> {
             parsers.push(dp);
         }
 
+        if tr.const_loc != Token::default() {
+            let loc = tr.const_loc;
+            let src = &contents[loc.pos..];
+            let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
+
+            dp.reqs = dom.reqs;
+            dp.what = ParsingWhat::Constants;
+            parsers.push(dp);
+        }
+
         let types = &dom.types;
         let results: Vec<Result<ParseResult, ParseError>> = parsers
             .par_iter_mut()
             .map(|dp| match dp.what {
                 ParsingWhat::Predicates => dp.predicates(types),
                 ParsingWhat::Functions => dp.functions(types),
+                ParsingWhat::Constants => dp.constants(types),
                 _ => panic!("Parsing incorrect contents: {:?}", dp.what),
             })
             .collect();
@@ -86,6 +100,7 @@ impl<'a> Domain<'a> {
             match pr.what {
                 ParsingWhat::Predicates => dom.predicates = pr.predicates,
                 ParsingWhat::Functions => dom.functions = pr.functions,
+                ParsingWhat::Constants => dom.constants = pr.constants,
                 _ => continue,
             }
         }
@@ -103,6 +118,7 @@ impl<'a> Domain<'a> {
             types: tr.types,
             predicates: vec![],
             functions: vec![],
+            constants: vec![],
         };
 
         if tr.pred_loc != Token::default() {
@@ -121,6 +137,15 @@ impl<'a> Domain<'a> {
 
             dp.reqs = dom.reqs;
             dom.functions = dp.functions(&dom.types)?.functions;
+        }
+
+        if tr.const_loc != Token::default() {
+            let loc = tr.const_loc;
+            let src = &contents[loc.pos..];
+            let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
+
+            dp.reqs = dom.reqs;
+            dom.constants = dp.constants(&dom.types)?.constants;
         }
 
         Ok(dom)
@@ -311,6 +336,18 @@ pub struct Function {
 #[derive(Debug, PartialEq)]
 pub struct Param(Vec<TypeId>);
 
+/// `Constant` is a PDDL declared constant object that is declared
+/// within a domain description.
+#[derive(Debug)]
+pub struct Constant {
+    /// A unique assigned ID for the constant.
+    pub id: ConstId,
+    /// Constant's name.
+    pub name: String,
+    /// The types that this constant derives from.
+    pub types: Vec<TypeId>,
+}
+
 /// `expect!` provides a concise way of returning a `ParseError` from
 /// a given `Token` and arbitrary number of arguments that represent the
 /// expected tokens.
@@ -352,6 +389,7 @@ enum ParsingWhat {
     Any,
     Functions,
     Predicates,
+    Constants,
 }
 
 /// `DomainParser` maintains the state necessary to parse a portion of
@@ -461,7 +499,7 @@ impl<'a> DomainParser<'a> {
             if top_keys.len() == 7 {
                 top_keys = &top_keys[0..6];
                 if self.next_keyword_is(TOP_LEVEL_KEYWORDS[6]) {
-                    result.constants = self.balance_parens()?;
+                    result.const_loc = self.balance_parens()?;
                     self.check_next_token_is_one_of(&PARENS)?;
                     continue;
                 }
@@ -1250,6 +1288,70 @@ impl<'a> DomainParser<'a> {
             }
         }
     }
+
+    /// `constants` parses the `:constants` portion of the PDDL domain.
+    fn constants(&mut self, types: &Types) -> Result<ParseResult, ParseError> {
+        let mut const_id = 0;
+        let mut consts: Vec<Constant> = vec![];
+        let mut const_ids: Vec<ConstId> = vec![];
+        let mut const_map: HashMap<String, ConstId> = HashMap::new();
+
+        loop {
+            self.check_next_is_one_of_or_ident(&[")"])?;
+            if self.next_token_is(TokenType::RParen) {
+                let mut result = ParseResult::with_name("");
+                result.what = ParsingWhat::Constants;
+                result.constants = consts;
+                return Ok(result);
+            }
+
+            let ident = self.consume_ident()?.to_ascii_lowercase();
+            if let Some(&id) = const_map.get(&ident) {
+                const_ids.push(id);
+            } else {
+                consts.push(Constant {
+                    id: const_id,
+                    name: ident.clone(),
+                    types: vec![],
+                });
+                const_map.insert(ident, const_id);
+                const_ids.push(const_id);
+                const_id += 1;
+            }
+
+            let tok = self.check_next_is_one_of_or_ident(&["-", ")"])?;
+
+            if self.next_token_is(TokenType::Minus) {
+                if !self.has_requirement(Requirement::Typing) {
+                    return Err(ParseError::missing(
+                        tok.line,
+                        tok.col,
+                        Requirement::Typing,
+                        ":types",
+                    ));
+                }
+
+                let mut type_ids: Vec<TypeId> = vec![];
+                let src = self.contents;
+
+                self.type_declarations(|t| {
+                    let name = t.to_str(src);
+                    if let Some(tid) = types.get(name) {
+                        type_ids.push(tid);
+                        return Ok(());
+                    }
+                    Err(ParseError::type_not_defined(t.line, t.col, name))
+                })?;
+
+                for &id in &const_ids {
+                    consts[id].types.extend_from_slice(&type_ids);
+                    consts[id].types.sort();
+                    consts[id].types.dedup();
+                }
+                const_ids.clear();
+            }
+        }
+    }
 }
 
 /// `AtomicFormula` encapsulates the parsed result of a predicate or
@@ -1361,7 +1463,7 @@ struct ParseResult<'a> {
     name: &'a str,              // Name of a domain.
     reqs: u32,                  // Requirements of the domain represented as bit vector.
     types: Types,               // Types extracted from the domain.
-    constants: Token,           // Token within the PDDL source where constants are located.
+    const_loc: Token,           // Token within the PDDL source where constants are located.
     pred_loc: Token,            // Token within the PDDL source where predicates are located.
     func_loc: Token,            // Token within the PDDL source where functions are located.
     constraints: Token,         // Token within the PDDL source where constraints are located.
@@ -1370,6 +1472,7 @@ struct ParseResult<'a> {
     deriveds: Vec<Token>,       // Tokens where :derived functions begin in the PDDL source.
     predicates: Vec<Predicate>, // Parsed predicate declarations.
     functions: Vec<Function>,   // Parsed function declarations.
+    constants: Vec<Constant>,   // Parsed constant declarations.
 }
 
 impl<'a> ParseResult<'a> {
@@ -1381,7 +1484,7 @@ impl<'a> ParseResult<'a> {
             what: ParsingWhat::Any,
             reqs: 0,
             types: Types::default(),
-            constants: Token::default(),
+            const_loc: Token::default(),
             pred_loc: Token::default(),
             func_loc: Token::default(),
             constraints: Token::default(),
@@ -1390,6 +1493,7 @@ impl<'a> ParseResult<'a> {
             deriveds: vec![],
             predicates: vec![],
             functions: vec![],
+            constants: vec![],
         }
     }
 

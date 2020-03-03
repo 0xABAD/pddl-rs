@@ -2,6 +2,10 @@
   (:requirements :strips :typing :fluents)
   (:types data location)
 
+  (:constants
+   a_crater b_crater c_crater - location
+   isotope hev-lab - data)
+
   (:predicates
    (comm ?d - data)
    (have ?d - data)
@@ -15,4 +19,4 @@
    (effort ?d - data)
    ) ;; end :functions
 
-  ) ;; end (domain rover)
+) ;; end (domain rover)
