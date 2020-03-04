@@ -8,7 +8,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("parse parallel", |b| {
         b.iter(|| {
             match Domain::parse(black_box(&s)) {
-                Err(e) => panic!("Could not domain: {}", e),
+                Err(e) => panic!("Could not domain: {:?}", e),
                 _ => (),
             }
         });
@@ -17,7 +17,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("parse sequentially", |b| {
         b.iter(|| {
             match Domain::parse(black_box(&s)) {
-                Err(e) => panic!("Could not domain: {}", e),
+                Err(e) => panic!("Could not domain: {:?}", e),
                 _ => (),
             }
         });

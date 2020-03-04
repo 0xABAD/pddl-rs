@@ -9,6 +9,7 @@ pub type TypeId = usize;
 pub type PredId = usize;
 pub type FuncId = usize;
 pub type ConstId = usize;
+pub type ParseErrors = Vec<ParseError>;
 
 /// `Domain` represents the final output from parsing the contents
 /// representing some PDDL domain.
@@ -39,9 +40,14 @@ impl<'a> Domain<'a> {
     /// `parse` returns a complete domain represented by the PDDL domain
     /// within `contents.`  Returns a `ParseError` if any syntax or semantic
     /// error is encountered.
-    pub fn parse(contents: &str) -> Result<Domain, ParseError> {
+    pub fn parse(contents: &str) -> Result<Domain, ParseErrors> {
         let mut top = DomainParser::new(contents);
-        let tr = top.top_level()?;
+
+        let tr: ParseResult;
+        match top.top_level() {
+            Ok(pr) => tr = pr,
+            Err(e) => return Err(vec![e]),
+        }
 
         let mut dom = Domain {
             name: tr.name,
@@ -95,8 +101,18 @@ impl<'a> Domain<'a> {
             })
             .collect();
 
+        let mut errors: Vec<ParseError> = vec![];
         for result in results {
-            let pr = result?;
+            let pr = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    errors.push(e);
+                    ParseResult::with_name("")
+                },
+            };
+            if errors.len() > 0 {
+                continue;
+            }
             match pr.what {
                 ParsingWhat::Predicates => dom.predicates = pr.predicates,
                 ParsingWhat::Functions => dom.functions = pr.functions,
@@ -105,12 +121,22 @@ impl<'a> Domain<'a> {
             }
         }
 
+        if errors.len() > 0 {
+            return Err(errors);
+        }
+
         Ok(dom)
     }
 
-    pub fn parse_seq(contents: &str) -> Result<Domain, ParseError> {
+    pub fn parse_seq(contents: &str) -> Result<Domain, ParseErrors> {
         let mut top = DomainParser::new(contents);
-        let tr = top.top_level()?;
+        let mut errors: Vec<ParseError> = vec![];
+
+        let tr: ParseResult;
+        match top.top_level() {
+            Ok(r) => tr = r,
+            Err(e) => return Err(vec![e]),
+        }
 
         let mut dom = Domain {
             name: tr.name,
@@ -127,7 +153,10 @@ impl<'a> Domain<'a> {
             let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
 
             dp.reqs = dom.reqs;
-            dom.predicates = dp.predicates(&dom.types)?.predicates;
+            match dp.predicates(&dom.types) {
+                Ok(pr) => dom.predicates = pr.predicates,
+                Err(e) => errors.push(e),
+            }
         }
 
         if tr.func_loc != Token::default() {
@@ -136,7 +165,10 @@ impl<'a> Domain<'a> {
             let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
 
             dp.reqs = dom.reqs;
-            dom.functions = dp.functions(&dom.types)?.functions;
+            match dp.functions(&dom.types) {
+                Ok(pr) => dom.functions = pr.functions,
+                Err(e) => errors.push(e),
+            }
         }
 
         if tr.const_loc != Token::default() {
@@ -145,9 +177,15 @@ impl<'a> Domain<'a> {
             let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
 
             dp.reqs = dom.reqs;
-            dom.constants = dp.constants(&dom.types)?.constants;
+            match dp.constants(&dom.types) {
+                Ok(pr) => dom.constants = pr.constants,
+                Err(e) => errors.push(e),
+            }
         }
 
+        if errors.len() > 0 {
+            return Err(errors);
+        }
         Ok(dom)
     }
 
