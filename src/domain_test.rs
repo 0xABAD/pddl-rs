@@ -1,5 +1,13 @@
 use super::*;
 
+macro_rules! param {
+    ($($arg:tt)*) => {
+        {
+            Param { types: vec![$($arg)*] }
+        }
+    }
+}
+
 #[test]
 fn check_if_domain() {
     assert!(Domain::is_domain("(define (domain foo))"));
@@ -482,23 +490,17 @@ fn can_parse_predicates() -> Result<(), ParseErrors> {
     let bar = &d.predicates[0];
     assert_eq!(bar.id, 0);
     assert_eq!(bar.name, "bar");
-    assert_eq!(bar.params, vec![Param(vec![0])]);
+    assert_eq!(bar.params, vec![param![0]]);
 
     let baz = &d.predicates[1];
     assert_eq!(baz.id, 1);
     assert_eq!(baz.name, "baz");
-    assert_eq!(
-        baz.params,
-        vec![Param(vec![3]), Param(vec![3]), Param(vec![1])]
-    );
+    assert_eq!(baz.params, vec![param![3], param![3], param![1]]);
 
     let quux = &d.predicates[2];
     assert_eq!(quux.id, 2);
     assert_eq!(quux.name, "quux");
-    assert_eq!(
-        quux.params,
-        vec![Param(vec![2]), Param(vec![1, 2]), Param(vec![1, 2])]
-    );
+    assert_eq!(quux.params, vec![param![2], param![1, 2], param![1, 2]]);
 
     Ok(())
 }
@@ -519,15 +521,12 @@ fn predicates_collates_either_types() -> Result<(), ParseErrors> {
     let bar = &d.predicates[0];
     assert_eq!(bar.id, 0);
     assert_eq!(bar.name, "bar");
-    assert_eq!(bar.params, vec![Param(vec![0, 1, 2]), Param(vec![2, 3])]);
+    assert_eq!(bar.params, vec![param![0, 1, 2], param![2, 3]]);
 
     let fub = &d.predicates[1];
     assert_eq!(fub.id, 1);
     assert_eq!(fub.name, "fub");
-    assert_eq!(
-        fub.params,
-        vec![Param(vec![0, 3]), Param(vec![0, 1]), Param(vec![2, 3])]
-    );
+    assert_eq!(fub.params, vec![param![0, 3], param![0, 1], param![2, 3]]);
 
     Ok(())
 }
@@ -545,12 +544,12 @@ fn parse_predicates_allow_mismatching_arity() -> Result<(), ParseErrors> {
     let bar = &d.predicates[0];
     assert_eq!(bar.id, 0);
     assert_eq!(bar.name, "bar");
-    assert_eq!(bar.params, vec![Param(vec![0])]);
+    assert_eq!(bar.params, vec![param![0]]);
 
     let bar = &d.predicates[1];
     assert_eq!(bar.id, 1);
     assert_eq!(bar.name, "bar");
-    assert_eq!(bar.params, vec![Param(vec![1]), Param(vec![3])]);
+    assert_eq!(bar.params, vec![param![1], param![3]]);
 
     Ok(())
 }
@@ -632,34 +631,28 @@ fn can_parse_functions() -> Result<(), ParseErrors> {
     let bar = &d.functions[0];
     assert_eq!(bar.id, 0);
     assert_eq!(bar.name, "bar");
-    assert_eq!(bar.params, vec![Param(vec![0])]);
+    assert_eq!(bar.params, vec![param![0]]);
     assert_eq!(bar.return_types, vec![]);
     assert!(bar.returns_number);
 
     let bar2 = &d.functions[1];
     assert_eq!(bar2.id, 1);
     assert_eq!(bar2.name, "bar2");
-    assert_eq!(bar2.params, vec![Param(vec![0])]);
+    assert_eq!(bar2.params, vec![param![0]]);
     assert_eq!(bar2.return_types, vec![]);
     assert!(bar2.returns_number);
 
     let baz = &d.functions[2];
     assert_eq!(baz.id, 2);
     assert_eq!(baz.name, "baz");
-    assert_eq!(
-        baz.params,
-        vec![Param(vec![3]), Param(vec![3]), Param(vec![1])]
-    );
+    assert_eq!(baz.params, vec![param![3], param![3], param![1]]);
     assert_eq!(baz.return_types, vec![1, 3]);
     assert!(!baz.returns_number);
 
     let quux = &d.functions[3];
     assert_eq!(quux.id, 3);
     assert_eq!(quux.name, "quux");
-    assert_eq!(
-        quux.params,
-        vec![Param(vec![2]), Param(vec![1, 2]), Param(vec![1, 2])]
-    );
+    assert_eq!(quux.params, vec![param![2], param![1, 2], param![1, 2]]);
     assert_eq!(quux.return_types, vec![0]);
     assert!(!quux.returns_number);
 
@@ -693,15 +686,12 @@ fn parse_functions_allow_mismatching_arity() -> Result<(), ParseErrors> {
     let bar = &d.functions[0];
     assert_eq!(bar.id, 0);
     assert_eq!(bar.name, "bar");
-    assert_eq!(bar.params, vec![Param(vec![0]), Param(vec![1])]);
+    assert_eq!(bar.params, vec![param![0], param![1]]);
 
     let bar = &d.functions[1];
     assert_eq!(bar.id, 1);
     assert_eq!(bar.name, "bar");
-    assert_eq!(
-        bar.params,
-        vec![Param(vec![1]), Param(vec![2]), Param(vec![3])]
-    );
+    assert_eq!(bar.params, vec![param![1], param![2], param![3]]);
 
     Ok(())
 }
@@ -724,34 +714,28 @@ fn functions_collates_either_types() -> Result<(), ParseErrors> {
     let bar = &d.functions[0];
     assert_eq!(bar.id, 0);
     assert_eq!(bar.name, "bar");
-    assert_eq!(bar.params, vec![Param(vec![0, 2, 3])]);
+    assert_eq!(bar.params, vec![param![0, 2, 3]]);
     assert_eq!(bar.return_types, vec![]);
     assert!(bar.returns_number);
 
     let fub = &d.functions[1];
     assert_eq!(fub.id, 1);
     assert_eq!(fub.name, "fub");
-    assert_eq!(fub.params, vec![Param(vec![0])]);
+    assert_eq!(fub.params, vec![param![0]]);
     assert_eq!(fub.return_types, vec![]);
     assert!(fub.returns_number);
 
     let baz = &d.functions[2];
     assert_eq!(baz.id, 2);
     assert_eq!(baz.name, "baz");
-    assert_eq!(
-        baz.params,
-        vec![Param(vec![3]), Param(vec![3]), Param(vec![1])]
-    );
+    assert_eq!(baz.params, vec![param![3], param![3], param![1]]);
     assert_eq!(baz.return_types, vec![1, 3]);
     assert!(baz.returns_number);
 
     let quux = &d.functions[3];
     assert_eq!(quux.id, 3);
     assert_eq!(quux.name, "quux");
-    assert_eq!(
-        quux.params,
-        vec![Param(vec![2]), Param(vec![1, 2]), Param(vec![1, 2])]
-    );
+    assert_eq!(quux.params, vec![param![2], param![1, 2], param![1, 2]]);
     assert_eq!(quux.return_types, vec![0, 1]);
     assert!(!quux.returns_number);
 

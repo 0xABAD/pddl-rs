@@ -372,7 +372,15 @@ pub struct Function {
 /// parameter maintains its list of immediate `TypeId`s, that the
 /// parameter may be.
 #[derive(Debug, PartialEq)]
-pub struct Param(Vec<TypeId>);
+pub struct Param {
+    pub types: Vec<TypeId>,
+}
+
+impl Default for Param {
+    fn default() -> Self {
+        Param { types: vec![] }
+    }
+}
 
 /// `Constant` is a PDDL declared constant object that is declared
 /// within a domain description.
@@ -1102,9 +1110,10 @@ impl<'a> DomainParser<'a> {
                     new_pred = false;
                     for i in 0..sig.params.len() {
                         let p = &sig.params[i];
-                        result.predicates[id].params[i].0.extend_from_slice(&p.0);
-                        result.predicates[id].params[i].0.sort();
-                        result.predicates[id].params[i].0.dedup();
+                        let param = &mut result.predicates[id].params[i];
+                        param.types.extend_from_slice(&p.types);
+                        param.types.sort();
+                        param.types.dedup();
                     }
                 }
             }
@@ -1143,9 +1152,10 @@ impl<'a> DomainParser<'a> {
                     func_ids.push(id);
                     for i in 0..sig.params.len() {
                         let p = &sig.params[i];
-                        funcs[id].params[i].0.extend_from_slice(&p.0);
-                        funcs[id].params[i].0.sort();
-                        funcs[id].params[i].0.dedup();
+                        let param = &mut funcs[id].params[i];
+                        param.types.extend_from_slice(&p.types);
+                        param.types.sort();
+                        param.types.dedup();
                     }
                 }
             }
@@ -1282,13 +1292,13 @@ impl<'a> DomainParser<'a> {
                 return Ok(sig);
             // } else if let TokenType::Variable(_, _) = tok.what {
             } else if tok.is_var() {
-                sig.params.push(Param(vec![]));
+                sig.params.push(Param::default());
 
                 'types: loop {
                     let tok = next_token!(self, "variable", "-", ")")?;
 
                     if tok.is_var() {
-                        sig.params.push(Param(vec![]));
+                        sig.params.push(Param::default());
                     } else if tok.is_right() {
                         // No more variables, we're done.
                         return Ok(sig);
@@ -1310,7 +1320,7 @@ impl<'a> DomainParser<'a> {
                             let name = t.to_str(src);
                             if let Some(tid) = types.get(name) {
                                 for i in var_begin..sig.params.len() {
-                                    sig.params[i].0.push(tid);
+                                    sig.params[i].types.push(tid);
                                 }
                                 return Ok(());
                             }
