@@ -559,6 +559,24 @@ fn parse_predicates_allow_mismatching_arity() -> Result<(), ParseErrors> {
 }
 
 #[test]
+fn parse_predicates_fails_with_duplicated_parameter() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - Sphere ?A)))",
+    );
+
+    if let Err(e) = d {
+        if let ParseErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "?A is a duplicated parameter");
+            return;
+        }
+    }
+    panic!("Duplicated parameter error not detected");
+}
+
+#[test]
 fn parse_predicates_fails_with_type_not_defined() {
     let d = Domain::parse(
         "(define (domain foo)
@@ -744,6 +762,24 @@ fn functions_collates_either_types() -> Result<(), ParseErrors> {
     assert!(!quux.returns_number);
 
     Ok(())
+}
+
+#[test]
+fn parse_functions_fails_with_duplicated_parameter() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:functions (bar ?a - object ?A)))",
+    );
+
+    if let Err(e) = d {
+        if let ParseErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "?A is a duplicated parameter");
+            return;
+        }
+    }
+    panic!("Duplicated parameter error not detected");
 }
 
 #[test]

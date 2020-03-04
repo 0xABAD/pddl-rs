@@ -1449,20 +1449,36 @@ impl<'a> DomainParser<'a> {
         // position to the end of sig.params will have whatever type
         // IDs appended to their ID list.
         let mut var_begin = 0;
+        let mut var_names: Vec<&str> = vec![];
 
         'variables: loop {
             let tok = next_token!(self, "variable", ")")?;
 
             if tok.is_right() {
                 return Ok(sig);
-            // } else if let TokenType::Variable(_, _) = tok.what {
             } else if tok.is_var() {
+                let name = tok.to_str(self.contents);
+                for n in &var_names {
+                    if n.eq_ignore_ascii_case(name) {
+                        let s = format!("{} is a duplicated parameter", name);
+                        return Err(self.semantic(&tok, &s));
+                    }
+                }
                 sig.params.push(Param::default());
+                var_names.push(name);
 
                 'types: loop {
                     let tok = next_token!(self, "variable", "-", ")")?;
 
                     if tok.is_var() {
+                        let name = tok.to_str(self.contents);
+                        for n in &var_names {
+                            if n.eq_ignore_ascii_case(name) {
+                                let s = format!("{} is a duplicated parameter", name);
+                                return Err(self.semantic(&tok, &s));
+                            }
+                        }
+                        var_names.push(name);
                         sig.params.push(Param::default());
                     } else if tok.is_right() {
                         // No more variables, we're done.
