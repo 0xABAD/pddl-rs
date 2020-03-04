@@ -9,6 +9,7 @@ pub type TypeId = usize;
 pub type PredId = usize;
 pub type FuncId = usize;
 pub type ConstId = usize;
+pub type ActionId = usize;
 pub type ParseErrors = Vec<ParseError>;
 
 /// `Domain` represents the final output from parsing the contents
@@ -22,6 +23,7 @@ pub struct Domain<'a> {
     predicates: Vec<Predicate>, // Parsed (:predicates) ordered by PredId.
     functions: Vec<Function>,   // Parsed (:functions) ordered by FuncId.
     constants: Vec<Constant>,   // Parsed (:constants) ordered by ConstId.
+    actions: Vec<Action>,       // Parsed (:action ...) definitions.
 }
 
 impl<'a> Domain<'a> {
@@ -56,6 +58,7 @@ impl<'a> Domain<'a> {
             predicates: vec![],
             functions: vec![],
             constants: vec![],
+            actions: vec![],
         };
 
         let mut parsers: Vec<DomainParser> = vec![];
@@ -90,6 +93,15 @@ impl<'a> Domain<'a> {
             parsers.push(dp);
         }
 
+        for loc in tr.action_locs {
+            let src = &contents[loc.pos..];
+            let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
+
+            dp.reqs = dom.reqs;
+            dp.what = ParsingWhat::Action;
+            parsers.push(dp);
+        }
+
         let types = &dom.types;
         let results: Vec<Result<ParseResult, ParseError>> = parsers
             .par_iter_mut()
@@ -97,18 +109,22 @@ impl<'a> Domain<'a> {
                 ParsingWhat::Predicates => dp.predicates(types),
                 ParsingWhat::Functions => dp.functions(types),
                 ParsingWhat::Constants => dp.constants(types),
+                ParsingWhat::Action => dp.action(types),
                 _ => panic!("Parsing incorrect contents: {:?}", dp.what),
             })
             .collect();
 
         let mut errors: Vec<ParseError> = vec![];
+        let mut act_id: ActionId = 0;
+        let mut act_names: HashSet<String> = HashSet::new();
+
         for result in results {
             let pr = match result {
                 Ok(r) => r,
                 Err(e) => {
                     errors.push(e);
                     ParseResult::with_name("")
-                },
+                }
             };
             if errors.len() > 0 {
                 continue;
@@ -117,6 +133,23 @@ impl<'a> Domain<'a> {
                 ParsingWhat::Predicates => dom.predicates = pr.predicates,
                 ParsingWhat::Functions => dom.functions = pr.functions,
                 ParsingWhat::Constants => dom.constants = pr.constants,
+                ParsingWhat::Action => {
+                    let mut act = pr.action.expect("did not receive a parsed :action");
+
+                    if act_names.contains(&act.name) {
+                        let s = format!("action, {}, is already defined", &act.name);
+                        errors.push(ParseError {
+                            what: ParseErrorType::SemanticError(s),
+                            line: act.line,
+                            col: act.col,
+                        });
+                    } else {
+                        act.id = act_id;
+                        act_id += 1;
+                        act_names.insert(act.name.clone());
+                        dom.actions.push(act);
+                    }
+                }
                 _ => continue,
             }
         }
@@ -145,6 +178,7 @@ impl<'a> Domain<'a> {
             predicates: vec![],
             functions: vec![],
             constants: vec![],
+            actions: vec![],
         };
 
         if tr.pred_loc != Token::default() {
@@ -374,11 +408,22 @@ pub struct Function {
 #[derive(Debug, PartialEq)]
 pub struct Param {
     pub types: Vec<TypeId>,
+
+    // Need to track the token positions of the parameter as
+    // there is a need to check if a parameter has been previously
+    // defined while also being able to shadow previously defined
+    // parameters.
+    start: usize, // Token start position of the param.
+    end: usize,   // Token end position of the param.
 }
 
 impl Default for Param {
     fn default() -> Self {
-        Param { types: vec![] }
+        Param {
+            types: vec![],
+            start: 0,
+            end: 0,
+        }
     }
 }
 
@@ -392,6 +437,33 @@ pub struct Constant {
     pub name: String,
     /// The types that this constant derives from.
     pub types: Vec<TypeId>,
+}
+
+/// `Action` is a basic :strips PDDL action that is declared within
+/// a domain description.
+#[derive(Debug)]
+pub struct Action {
+    /// A unique assigned ID for the action.
+    pub id: ActionId,
+    /// Action's name in lowercase form.
+    pub name: String,
+    /// Parameters of the action.
+    pub params: Vec<Param>,
+
+    line: usize, // Line number where the action is defined.
+    col: usize,  // Column number where the action is defined.
+}
+
+impl Action {
+    fn new(name: &str) -> Action {
+        Action {
+            name: name.to_ascii_lowercase(),
+            id: 0,
+            params: vec![],
+            line: 0,
+            col: 0,
+        }
+    }
 }
 
 /// `expect!` provides a concise way of returning a `ParseError` from
@@ -436,6 +508,7 @@ enum ParsingWhat {
     Functions,
     Predicates,
     Constants,
+    Action,
 }
 
 /// `DomainParser` maintains the state necessary to parse a portion of
@@ -587,7 +660,7 @@ impl<'a> DomainParser<'a> {
             }
 
             if self.next_keyword_is(TOP_LEVEL_KEYWORDS[2]) {
-                result.actions.push(self.balance_parens()?);
+                result.action_locs.push(self.balance_parens()?);
                 self.check_next_token_is_one_of(&PARENS)?;
                 continue;
             }
@@ -727,6 +800,25 @@ impl<'a> DomainParser<'a> {
         })
     }
 
+    /// `specific_keyword` consumes and returns the next token that is a
+    /// keyword whose string form is case insensitive equal to `what`.
+    /// If that is not the case then a `ParseError` is returned that expects
+    /// `what`.
+    fn specific_keyword(&mut self, what: &'a str) -> Result<Token, ParseError> {
+        self.expect_next(what).and_then(|tok| {
+            if let TokenType::Keyword(s, e) = tok.what {
+                let kw = &self.contents[s..e];
+                if kw.eq_ignore_ascii_case(what) {
+                    Ok(tok)
+                } else {
+                    expect!(self, tok, what)
+                }
+            } else {
+                expect!(self, tok, what)
+            }
+        })
+    }
+
     /// `consume` consumes and returns the next token whose `TokenType` is
     /// is equal to `what`. If that is not the case then a `ParseError` is
     /// returned that expects `what`.
@@ -850,6 +942,40 @@ impl<'a> DomainParser<'a> {
         let s = tok.to_str(self.contents);
         let mut v = words.to_vec();
         v.push("identifier");
+        Err(ParseError::expect(tok.line, tok.col, s, v))
+    }
+
+    /// `check_next_is_one_of_or_var` is like `check_next_is_one_of` but
+    /// also succeeds if the next token is a variable or matches one of
+    /// `words`.  Returns the token on success.
+    fn check_next_is_one_of_or_var(&mut self, words: &[&'a str]) -> Result<Token, ParseError> {
+        let tok: Token;
+
+        if let Some(t) = self.last_token {
+            tok = t
+        } else {
+            tok = self.tokenizer.next().or_else(|e| {
+                let mut v = words.to_vec();
+                v.push("variable");
+                Err(ParseError::from_token_error(e, self.contents, v))
+            })?;
+            self.last_token = Some(tok);
+        }
+
+        if tok.is_var() {
+            return Ok(tok);
+        }
+        for i in 0..words.len() {
+            let w = words[i];
+            let s = tok.to_str(self.contents);
+            if s.eq_ignore_ascii_case(w) {
+                return Ok(tok);
+            }
+        }
+
+        let s = tok.to_str(self.contents);
+        let mut v = words.to_vec();
+        v.push("variable");
         Err(ParseError::expect(tok.line, tok.col, s, v))
     }
 
@@ -1032,6 +1158,24 @@ impl<'a> DomainParser<'a> {
             return expect!(self, t1, "identifier", "(");
         }
         Ok(())
+    }
+
+    /// `collect_types` is a more specific version for `type_declarations` that
+    /// merely extracts and returns the collected `TypeId`s.
+    fn collect_types(&mut self, types: &Types) -> Result<Vec<TypeId>, ParseError> {
+        let mut type_ids: Vec<TypeId> = vec![];
+        let src = self.contents;
+
+        self.type_declarations(|t| {
+            let name = t.to_str(src);
+            if let Some(tid) = types.get(name) {
+                type_ids.push(tid);
+                return Ok(());
+            }
+            Err(ParseError::type_not_defined(t.line, t.col, name))
+        })?;
+
+        Ok(type_ids)
     }
 
     /// `balance_parens` consumes tokens until the current count of parenthesis
@@ -1245,19 +1389,12 @@ impl<'a> DomainParser<'a> {
                     ));
                 }
 
-                self.type_declarations(|t| {
-                    let name = t.to_str(src);
-                    if let Some(tid) = types.get(name) {
-                        for &id in &func_ids {
-                            funcs[id].return_types.push(tid);
-                            funcs[id].return_types.sort();
-                            funcs[id].return_types.dedup();
-                        }
-                        return Ok(());
-                    }
-                    Err(ParseError::type_not_defined(t.line, t.col, name))
-                })?;
-
+                let type_ids = self.collect_types(types)?;
+                for &id in &func_ids {
+                    funcs[id].return_types.extend_from_slice(&type_ids);
+                    funcs[id].return_types.sort();
+                    funcs[id].return_types.dedup();
+                }
                 func_ids.clear();
             } else {
                 // Next token is a left paren thus another function.
@@ -1379,18 +1516,7 @@ impl<'a> DomainParser<'a> {
                     ));
                 }
 
-                let mut type_ids: Vec<TypeId> = vec![];
-                let src = self.contents;
-
-                self.type_declarations(|t| {
-                    let name = t.to_str(src);
-                    if let Some(tid) = types.get(name) {
-                        type_ids.push(tid);
-                        return Ok(());
-                    }
-                    Err(ParseError::type_not_defined(t.line, t.col, name))
-                })?;
-
+                let type_ids = self.collect_types(types)?;
                 for &id in &const_ids {
                     consts[id].types.extend_from_slice(&type_ids);
                     consts[id].types.sort();
@@ -1398,6 +1524,71 @@ impl<'a> DomainParser<'a> {
                 }
                 const_ids.clear();
             }
+        }
+    }
+
+    /// `action` parses an :action definition.  Note that the ActionId is not
+    /// assigned.
+    fn action(&mut self, types: &Types) -> Result<ParseResult, ParseError> {
+        let act_name = self.next_ident()?;
+        let mut result = ParseResult::with_name("");
+        let mut action = Action::new(act_name.to_str(self.contents));
+
+        self.specific_keyword(":parameters")?;
+        action.params = self.typed_list_variable(types)?;
+        action.line = act_name.line;
+        action.col = act_name.col;
+
+        result.what = ParsingWhat::Action;
+        result.action = Some(action);
+
+        Ok(result)
+    }
+
+    /// `typed_list_variable` returns the variable parameters that are associated with
+    /// variable list declarations for :action parameters, forall goal, and other such
+    /// constructs.  One or more variable parameters may or may not not have types.
+    fn typed_list_variable(&mut self, types: &Types) -> Result<Vec<Param>, ParseError> {
+        let mut params: Vec<Param> = vec![];
+
+        self.consume(TokenType::LParen)?;
+        'variables: loop {
+            let tok = self.check_next_is_one_of_or_var(&[")"])?;
+            self.last_token = None;
+
+            if tok.is_right() {
+                return Ok(params);
+            }
+            let mut param = Param::default();
+
+            if let TokenType::Variable(s, e) = tok.what {
+                param.start = s;
+                param.end = e;
+            }
+
+            self.check_next_is_one_of_or_var(&["-", ")"])?;
+
+            let type_ids = if self.next_token_is(TokenType::Minus) {
+                self.collect_types(types)?
+            } else {
+                vec![]
+            };
+
+            let name = &self.contents[param.start..param.end];
+            for p in &mut params {
+                let prev = &self.contents[p.start..p.end];
+                if prev.eq_ignore_ascii_case(name) {
+                    p.types.extend_from_slice(&type_ids);
+                    p.types.sort();
+                    p.types.dedup();
+                    continue 'variables;
+                }
+            }
+
+            param.types = type_ids;
+            param.types.sort();
+            param.types.dedup();
+            params.push(param);
         }
     }
 }
@@ -1515,12 +1706,13 @@ struct ParseResult<'a> {
     pred_loc: Token,            // Token within the PDDL source where predicates are located.
     func_loc: Token,            // Token within the PDDL source where functions are located.
     constraints: Token,         // Token within the PDDL source where constraints are located.
-    actions: Vec<Token>,        // Tokens where :actions begin in the PDDL source.
+    action_locs: Vec<Token>,    // Tokens where :actions begin in the PDDL source.
     duratives: Vec<Token>,      // Tokens where :durative-actions begin in the PDDL source.
     deriveds: Vec<Token>,       // Tokens where :derived functions begin in the PDDL source.
     predicates: Vec<Predicate>, // Parsed predicate declarations.
     functions: Vec<Function>,   // Parsed function declarations.
     constants: Vec<Constant>,   // Parsed constant declarations.
+    action: Option<Action>,     // Parsed action definition.
 }
 
 impl<'a> ParseResult<'a> {
@@ -1536,12 +1728,13 @@ impl<'a> ParseResult<'a> {
             pred_loc: Token::default(),
             func_loc: Token::default(),
             constraints: Token::default(),
-            actions: vec![],
+            action_locs: vec![],
             duratives: vec![],
             deriveds: vec![],
             predicates: vec![],
             functions: vec![],
             constants: vec![],
+            action: None,
         }
     }
 
