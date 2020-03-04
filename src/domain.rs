@@ -217,6 +217,34 @@ impl<'a> Domain<'a> {
             }
         }
 
+        let mut act_id: ActionId = 0;
+        let mut act_names: HashSet<String> = HashSet::new();
+        for loc in tr.action_locs {
+            let src = &contents[loc.pos..];
+            let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
+
+            dp.reqs = dom.reqs;
+            match dp.action(&dom.types) {
+                Ok(pr) => {
+                    let mut act = pr.action.expect("did not receive a parsed :action");
+                    if act_names.contains(&act.name) {
+                        let s = format!("action, {}, is already defined", &act.name);
+                        errors.push(ParseError {
+                            what: ParseErrorType::SemanticError(s),
+                            line: act.line,
+                            col: act.col,
+                        });
+                    } else {
+                        act.id = act_id;
+                        act_id += 1;
+                        act_names.insert(act.name.clone());
+                        dom.actions.push(act);
+                    }
+                }
+                Err(e) => errors.push(e),
+            }
+        }
+
         if errors.len() > 0 {
             return Err(errors);
         }
