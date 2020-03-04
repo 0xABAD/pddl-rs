@@ -1074,13 +1074,13 @@ impl<'a> DomainParser<'a> {
 
         result.what = ParsingWhat::Predicates;
 
-        let af = self.atomic_formula(types)?;
-        let key = af.lookup_key();
+        let sig = self.signature(types)?;
+        let key = sig.lookup_key();
 
         result.predicates.push(Predicate {
             id: pred_id,
-            name: af.name,
-            params: af.params,
+            name: sig.name,
+            params: sig.params,
         });
         pred_map.insert(key, pred_id);
         pred_id += 1;
@@ -1093,15 +1093,15 @@ impl<'a> DomainParser<'a> {
                 }
             }
 
-            let af = self.atomic_formula(types)?;
-            let key = af.lookup_key();
+            let sig = self.signature(types)?;
+            let key = sig.lookup_key();
             let mut new_pred = true;
 
             if let Some(&id) = pred_map.get(&key) {
-                if af.params.len() == result.predicates[id].params.len() {
+                if sig.params.len() == result.predicates[id].params.len() {
                     new_pred = false;
-                    for i in 0..af.params.len() {
-                        let p = &af.params[i];
+                    for i in 0..sig.params.len() {
+                        let p = &sig.params[i];
                         result.predicates[id].params[i].0.extend_from_slice(&p.0);
                         result.predicates[id].params[i].0.sort();
                         result.predicates[id].params[i].0.dedup();
@@ -1112,8 +1112,8 @@ impl<'a> DomainParser<'a> {
             if new_pred {
                 result.predicates.push(Predicate {
                     id: pred_id,
-                    name: af.name,
-                    params: af.params,
+                    name: sig.name,
+                    params: sig.params,
                 });
                 pred_map.insert(key, pred_id);
                 pred_id += 1;
@@ -1133,16 +1133,16 @@ impl<'a> DomainParser<'a> {
         let mut parsed_types = false;
 
         loop {
-            let af = self.atomic_formula(types)?;
-            let key = af.lookup_key();
+            let sig = self.signature(types)?;
+            let key = sig.lookup_key();
             let mut new_func = true;
 
             if let Some(&id) = func_map.get(&key) {
-                if funcs[id].params.len() == af.params.len() {
+                if funcs[id].params.len() == sig.params.len() {
                     new_func = false;
                     func_ids.push(id);
-                    for i in 0..af.params.len() {
-                        let p = &af.params[i];
+                    for i in 0..sig.params.len() {
+                        let p = &sig.params[i];
                         funcs[id].params[i].0.extend_from_slice(&p.0);
                         funcs[id].params[i].0.sort();
                         funcs[id].params[i].0.dedup();
@@ -1153,8 +1153,8 @@ impl<'a> DomainParser<'a> {
             if new_func {
                 funcs.push(Function {
                     id: func_id,
-                    name: af.name,
-                    params: af.params,
+                    name: sig.name,
+                    params: sig.params,
                     return_types: vec![],
                     returns_number: false,
                 });
@@ -1256,14 +1256,14 @@ impl<'a> DomainParser<'a> {
         }
     }
 
-    /// `atomic_formula` parses the predicate or function signature
+    /// `signature` parses the predicate or function signature
     /// found in either the :predicates or :functions section of the
     /// PDDL domain.
-    fn atomic_formula(&mut self, types: &Types) -> Result<AtomicFormula, ParseError> {
+    fn signature(&mut self, types: &Types) -> Result<Signature, ParseError> {
         self.consume(TokenType::LParen)?;
 
         let ident = self.consume_ident()?.to_ascii_lowercase();
-        let mut af = AtomicFormula {
+        let mut sig = Signature {
             name: ident,
             params: vec![],
         };
@@ -1271,7 +1271,7 @@ impl<'a> DomainParser<'a> {
         // been parsed.  After the type(s) have been parsed it
         // should be set to the position of where the next variable
         // in the parameter list begins.  Every parameter from this
-        // position to the end of af.params will have whatever type
+        // position to the end of sig.params will have whatever type
         // IDs appended to their ID list.
         let mut var_begin = 0;
 
@@ -1279,19 +1279,19 @@ impl<'a> DomainParser<'a> {
             let tok = next_token!(self, "variable", ")")?;
 
             if tok.is_right() {
-                return Ok(af);
+                return Ok(sig);
             // } else if let TokenType::Variable(_, _) = tok.what {
             } else if tok.is_var() {
-                af.params.push(Param(vec![]));
+                sig.params.push(Param(vec![]));
 
                 'types: loop {
                     let tok = next_token!(self, "variable", "-", ")")?;
 
                     if tok.is_var() {
-                        af.params.push(Param(vec![]));
+                        sig.params.push(Param(vec![]));
                     } else if tok.is_right() {
                         // No more variables, we're done.
-                        return Ok(af);
+                        return Ok(sig);
                     } else if tok.is_dash() {
                         // Reached type declaration, collect single or multiple
                         // (i.e. "either") types if and only if the :typing
@@ -1309,15 +1309,15 @@ impl<'a> DomainParser<'a> {
                         self.type_declarations(|t| {
                             let name = t.to_str(src);
                             if let Some(tid) = types.get(name) {
-                                for i in var_begin..af.params.len() {
-                                    af.params[i].0.push(tid);
+                                for i in var_begin..sig.params.len() {
+                                    sig.params[i].0.push(tid);
                                 }
                                 return Ok(());
                             }
                             Err(ParseError::type_not_defined(t.line, t.col, name))
                         })?;
 
-                        var_begin = af.params.len();
+                        var_begin = sig.params.len();
                         break 'types;
                     } else {
                         return expect!(self, tok, "identifier", "-", ")");
@@ -1392,15 +1392,15 @@ impl<'a> DomainParser<'a> {
     }
 }
 
-/// `AtomicFormula` encapsulates the parsed result of a predicate or
+/// `Signature` encapsulates the parsed result of a predicate or
 /// function declaration (i.e. '(foo ?a ?b - object ?c - (either bar baz))' ).
-struct AtomicFormula {
+struct Signature {
     name: String,       // Name of the predicate or function (e.g. 'foo').
     params: Vec<Param>, // Parameters of the declaration (e.g. '?a', '?b', etc.).
 }
 
-impl AtomicFormula {
-    /// `lookup_key` returns a key that can be used to see if the AtomicFormula
+impl Signature {
+    /// `lookup_key` returns a key that can be used to see if the Signature
     /// has already been declared.  The key will be a combination of the formula's
     /// name along with its parameter arity and is composed of characters that is
     /// impossible to be a valid identifier.
