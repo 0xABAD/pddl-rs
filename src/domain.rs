@@ -1452,68 +1452,43 @@ impl<'a> DomainParser<'a> {
         let mut var_names: Vec<&str> = vec![];
 
         'variables: loop {
-            let tok = next_token!(self, "variable", ")")?;
+            let tok = self.check_next_is_one_of_or_var(&[")"])?;
+            self.last_token = None;
 
             if tok.is_right() {
                 return Ok(sig);
-            } else if tok.is_var() {
-                let name = tok.to_str(self.contents);
-                for n in &var_names {
-                    if n.eq_ignore_ascii_case(name) {
-                        let s = format!("{} is a duplicated parameter", name);
-                        return Err(self.semantic(&tok, &s));
-                    }
+            }
+
+            let name = tok.to_str(self.contents);
+            for n in &var_names {
+                if n.eq_ignore_ascii_case(name) {
+                    let s = format!("{} is a duplicated parameter", name);
+                    return Err(self.semantic(&tok, &s));
                 }
-                sig.params.push(Param::default());
-                var_names.push(name);
+            }
 
-                'types: loop {
-                    let tok = next_token!(self, "variable", "-", ")")?;
+            var_names.push(name);
+            sig.params.push(Param::default());
 
-                    if tok.is_var() {
-                        let name = tok.to_str(self.contents);
-                        for n in &var_names {
-                            if n.eq_ignore_ascii_case(name) {
-                                let s = format!("{} is a duplicated parameter", name);
-                                return Err(self.semantic(&tok, &s));
-                            }
-                        }
-                        var_names.push(name);
-                        sig.params.push(Param::default());
-                    } else if tok.is_right() {
-                        // No more variables, we're done.
-                        return Ok(sig);
-                    } else if tok.is_dash() {
-                        // Reached type declaration, collect single or multiple
-                        // (i.e. "either") types if and only if the :typing
-                        // requirement has been specified.
-                        if !self.has_requirement(Requirement::Typing) {
-                            return Err(ParseError::missing(
-                                tok.line,
-                                tok.col,
-                                Requirement::Typing,
-                                ":types",
-                            ));
-                        }
-
-                        let src = self.contents;
-                        self.type_declarations(|t| {
-                            let name = t.to_str(src);
-                            if let Some(tid) = types.get(name) {
-                                for i in var_begin..sig.params.len() {
-                                    sig.params[i].types.push(tid);
-                                }
-                                return Ok(());
-                            }
-                            Err(ParseError::type_not_defined(t.line, t.col, name))
-                        })?;
-
-                        var_begin = sig.params.len();
-                        break 'types;
-                    } else {
-                        return expect!(self, tok, "identifier", "-", ")");
-                    }
+            let tok = self.check_next_is_one_of_or_var(&["-", ")"])?;
+            if self.next_token_is(TokenType::Minus) {
+                if !self.has_requirement(Requirement::Typing) {
+                    return Err(ParseError::missing(
+                        tok.line,
+                        tok.col,
+                        Requirement::Typing,
+                        ":types",
+                    ));
                 }
+
+                let type_ids = self.collect_types(types)?;
+                for i in var_begin..sig.params.len() {
+                    let p = &mut sig.params[i];
+                    p.types.extend_from_slice(&type_ids);
+                    p.types.sort();
+                    p.types.dedup();
+                }
+                var_begin = sig.params.len();
             }
         }
     }
