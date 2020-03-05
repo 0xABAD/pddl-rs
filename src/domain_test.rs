@@ -621,7 +621,6 @@ fn parse_predicates_fails_when_typing_not_declared() {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips)
-           (:types block square sphere)
            (:predicates (bar ?a - object)
                         (baz ?a ?b - sphere ?c - block)
                         (quux ?a - square ?b ?c - (either block square))))",
@@ -784,6 +783,23 @@ fn parse_functions_fails_with_duplicated_parameter() {
 
 #[test]
 fn parse_functions_fails_when_typing_not_declared() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:functions (baz ?a ?b - object)))",
+    );
+
+    if let Err(e) = d {
+        if let ParseErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::Typing);
+            return;
+        }
+    }
+    panic!("Missing :types requirement error not returned");
+}
+
+#[test]
+fn parse_functions_fails_when_typing_not_declared2() {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips)
@@ -969,7 +985,6 @@ fn constants_return_error_when_typing_not_declared() {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips )
-           (:types block square sphere)
            (:constants bar - block))",
     );
 
