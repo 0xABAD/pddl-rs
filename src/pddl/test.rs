@@ -1030,7 +1030,7 @@ fn return_error_for_duplicate_action() {
            (:requirements :strips :typing)
            (:types block square sphere)
            (:action bar :parameters ())
-           (:action bar :parameters ()))",
+           (:action Bar :parameters ()))",
     );
 
     if let Err(e) = d {

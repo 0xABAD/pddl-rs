@@ -93,15 +93,6 @@ impl<'a> Domain<'a> {
             parsers.push(dp);
         }
 
-        for loc in tr.action_locs {
-            let src = &contents[loc.pos..];
-            let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
-
-            dp.reqs = dom.reqs;
-            dp.what = ParsingWhat::Action;
-            parsers.push(dp);
-        }
-
         let types = &dom.types;
         let results: Vec<Result<ParseResult, ParseError>> = parsers
             .par_iter_mut()
@@ -109,15 +100,11 @@ impl<'a> Domain<'a> {
                 ParsingWhat::Predicates => dp.predicates(types),
                 ParsingWhat::Functions => dp.functions(types),
                 ParsingWhat::Constants => dp.constants(types),
-                ParsingWhat::Action => dp.action(types),
                 _ => panic!("Parsing incorrect contents: {:?}", dp.what),
             })
             .collect();
 
         let mut errors: Vec<ParseError> = vec![];
-        let mut act_id: ActionId = 0;
-        let mut act_names: HashSet<String> = HashSet::new();
-
         for result in results {
             let pr = match result {
                 Ok(r) => r,
@@ -133,16 +120,87 @@ impl<'a> Domain<'a> {
                 ParsingWhat::Predicates => dom.predicates = pr.predicates,
                 ParsingWhat::Functions => dom.functions = pr.functions,
                 ParsingWhat::Constants => dom.constants = pr.constants,
+                _ => panic!("Parse result of unhandled kind: {:?}", pr.what),
+            }
+        }
+
+        if errors.len() > 0 {
+            return Err(errors);
+        }
+        parsers.clear();
+
+        let mut const_map: HashMap<String, ConstId> = HashMap::new();
+        for i in 0..dom.constants.len() {
+            let c = &dom.constants[i];
+            if c.id != i {
+                panic!("Constant ID not equal to its index");
+            }
+            const_map.insert(c.name.clone(), c.id);
+        }
+
+        let mut pred_map: HashMap<String, PredId> = HashMap::new();
+        for i in 0..dom.predicates.len() {
+            let p = &dom.predicates[i];
+            if p.id != i {
+                panic!("Predicate ID not equal to its index");
+            }
+            pred_map.insert(p.signature_key(), p.id);
+        }
+
+        let mut func_map: HashMap<String, FuncId> = HashMap::new();
+        for i in 0..dom.functions.len() {
+            let f = &dom.functions[i];
+            if f.id != i {
+                panic!("Function ID not equal to its index");
+            }
+            func_map.insert(f.signature_key(), f.id);
+        }
+
+        for loc in tr.action_locs {
+            let src = &contents[loc.pos..];
+            let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
+
+            dp.reqs = dom.reqs;
+            dp.what = ParsingWhat::Action;
+            dp.types = Some(&dom.types);
+            dp.const_map = Some(&const_map);
+            dp.constants = Some(&dom.constants);
+            dp.pred_map = Some(&pred_map);
+            dp.predicates = Some(&dom.predicates);
+            dp.func_map = Some(&func_map);
+            dp.functions = Some(&dom.functions);
+
+            parsers.push(dp);
+        }
+
+        let results: Vec<Result<ParseResult, ParseError>> = parsers
+            .par_iter_mut()
+            .map(|dp| match dp.what {
+                ParsingWhat::Action => dp.action(),
+                _ => panic!("Parsing incorrect contents: {:?}", dp.what),
+            })
+            .collect();
+
+        let mut act_id: ActionId = 0;
+        let mut act_names: HashSet<String> = HashSet::new();
+
+        for result in results {
+            let pr = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    errors.push(e);
+                    ParseResult::with_name("")
+                }
+            };
+            if errors.len() > 0 {
+                continue;
+            }
+            match pr.what {
                 ParsingWhat::Action => {
                     let mut act = pr.action.expect("did not receive a parsed :action");
-
                     if act_names.contains(&act.name) {
                         let s = format!("action, {}, is already defined", &act.name);
-                        errors.push(ParseError {
-                            what: ParseErrorType::SemanticError(s),
-                            line: act.line,
-                            col: act.col,
-                        });
+                        errors.push(ParseError::semantic(act.line, act.col, &s));
                     } else {
                         act.id = act_id;
                         act_id += 1;
@@ -150,7 +208,7 @@ impl<'a> Domain<'a> {
                         dom.actions.push(act);
                     }
                 }
-                _ => continue,
+                _ => panic!("Parse result of unhandled kind: {:?}", pr.what),
             }
         }
 
@@ -217,6 +275,33 @@ impl<'a> Domain<'a> {
             }
         }
 
+        let mut const_map: HashMap<String, ConstId> = HashMap::new();
+        for i in 0..dom.constants.len() {
+            let c = &dom.constants[i];
+            if c.id != i {
+                panic!("Constant ID not equal to its index");
+            }
+            const_map.insert(c.name.clone(), c.id);
+        }
+
+        let mut pred_map: HashMap<String, PredId> = HashMap::new();
+        for i in 0..dom.predicates.len() {
+            let p = &dom.predicates[i];
+            if p.id != i {
+                panic!("Predicate ID not equal to its index");
+            }
+            pred_map.insert(p.signature_key(), p.id);
+        }
+
+        let mut func_map: HashMap<String, FuncId> = HashMap::new();
+        for i in 0..dom.functions.len() {
+            let f = &dom.functions[i];
+            if f.id != i {
+                panic!("Function ID not equal to its index");
+            }
+            func_map.insert(f.signature_key(), f.id);
+        }
+
         let mut act_id: ActionId = 0;
         let mut act_names: HashSet<String> = HashSet::new();
         for loc in tr.action_locs {
@@ -224,7 +309,15 @@ impl<'a> Domain<'a> {
             let mut dp = DomainParser::with_offset(src, loc.col, loc.line);
 
             dp.reqs = dom.reqs;
-            match dp.action(&dom.types) {
+            dp.types = Some(&dom.types);
+            dp.const_map = Some(&const_map);
+            dp.constants = Some(&dom.constants);
+            dp.pred_map = Some(&pred_map);
+            dp.predicates = Some(&dom.predicates);
+            dp.func_map = Some(&func_map);
+            dp.functions = Some(&dom.functions);
+
+            match dp.action() {
                 Ok(pr) => {
                     let mut act = pr.action.expect("did not receive a parsed :action");
                     if act_names.contains(&act.name) {
@@ -412,6 +505,12 @@ pub struct Predicate {
     pub params: Vec<Param>,
 }
 
+impl Predicate {
+    fn signature_key(&self) -> String {
+        Signature::create_key(&self.name, self.params.len())
+    }
+}
+
 /// `Function` represents a predicate definition that is found
 /// within the `:predicates` section of a PDDL domain.
 #[derive(Debug)]
@@ -426,6 +525,12 @@ pub struct Function {
     pub return_types: Vec<TypeId>,
     /// True if the function returns a number.
     pub returns_number: bool,
+}
+
+impl Function {
+    fn signature_key(&self) -> String {
+        Signature::create_key(&self.name, self.params.len())
+    }
 }
 
 /// `Param` is a parsed parameter that can be found within various
@@ -475,8 +580,13 @@ pub struct Action {
     pub id: ActionId,
     /// Action's name in lowercase form.
     pub name: String,
-    /// Parameters of the action.
+    /// Parameters of the action.  An action is grounded
+    /// (i.e. instantiated) when the parameters are replaced
+    /// with defined objects of a problem.
     pub params: Vec<Param>,
+    /// Precondition of the action that specifies what must
+    /// fulfilled before the action can be executed.
+    pub precondition: Option<Goal>,
 
     line: usize, // Line number where the action is defined.
     col: usize,  // Column number where the action is defined.
@@ -488,10 +598,72 @@ impl Action {
             name: name.to_ascii_lowercase(),
             id: 0,
             params: vec![],
+            precondition: None,
             line: 0,
             col: 0,
         }
     }
+}
+
+/// `Goal` represents one of several options that construct an over
+/// all goal in a precondition, condition, problem goal, etc.
+#[derive(Debug, PartialEq)]
+pub enum Goal {
+    Not(Box<Goal>),
+    And(Vec<Goal>),
+    Or(Vec<Goal>),
+    Preference(String, Box<Goal>),
+    Forall(Vec<Param>, Box<Goal>),
+    Exists(Vec<Param>, Box<Goal>),
+    Imply(Box<Goal>, Box<Goal>),
+    Pred(PredId, Vec<Term>),
+    EqualTerms(Term, Term),
+    EqualFexps(Fexp, Fexp),
+    Less(Fexp, Fexp),
+    LessEq(Fexp, Fexp),
+    Greater(Fexp, Fexp),
+    GreaterEq(Fexp, Fexp),
+}
+
+/// `Term` represents one of the values that can be associated with
+/// `Goal::Pred` or within a `Term::Func` itself.  In other words,
+/// it represents the arguments to a predicate or a function.
+#[derive(Debug, PartialEq)]
+pub enum Term {
+    Const(ConstId),
+    Var(Vec<TypeId>),
+    Func(FuncId, Vec<Term>),
+}
+
+impl Term {
+    fn is_func(&self) -> bool {
+        if let Term::Func(_, _) = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// `TermInfo` allows packaging a `Term` along with the `Token` of
+/// when it was parsed.  This facilitates type checking after the
+/// term has bene parsed and returned to the caller.
+#[derive(Debug)]
+struct TermInfo {
+    what: Term,
+    tok: Token,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Fexp {
+    Number(f64),
+    Mult(Box<Fexp>, Vec<Fexp>),
+    Add(Box<Fexp>, Vec<Fexp>),
+    Div(Box<Fexp>, Box<Fexp>),
+    Sub(Box<Fexp>, Box<Fexp>),
+    Neg(Box<Fexp>),
+    Func(FuncId, Vec<Term>),
+    FnSymbol(String),
 }
 
 /// `expect!` provides a concise way of returning a `ParseError` from
@@ -547,6 +719,13 @@ struct DomainParser<'a> {
     last_token: Option<Token>, // Last scanned token that hasn't been consumed.
     reqs: u32,                 // Parsed :requirements.
     what: ParsingWhat,         // What is being parsed by the parser.
+    types: Option<&'a Types>,  // Previously parsed types.
+    const_map: Option<&'a HashMap<String, ConstId>>, // Mapping of a constants to its ID.
+    pred_map: Option<&'a HashMap<String, PredId>>, // Mapping of a predicates signature to its ID.
+    func_map: Option<&'a HashMap<String, FuncId>>, // Mapping of a functions signature to its ID.
+    constants: Option<&'a Vec<Constant>>, // All known constants ordered by ConstId.
+    predicates: Option<&'a Vec<Predicate>>, // All known predicates ordered by PredId.
+    functions: Option<&'a Vec<Function>>, // All known functions ordered by FuncId.
 }
 
 impl<'a> DomainParser<'a> {
@@ -559,6 +738,13 @@ impl<'a> DomainParser<'a> {
             last_token: None,
             reqs: 0,
             what: ParsingWhat::Any,
+            types: None,
+            const_map: None,
+            pred_map: None,
+            func_map: None,
+            constants: None,
+            predicates: None,
+            functions: None,
         };
     }
 
@@ -572,6 +758,13 @@ impl<'a> DomainParser<'a> {
             last_token: None,
             reqs: 0,
             what: ParsingWhat::Any,
+            types: None,
+            const_map: None,
+            pred_map: None,
+            func_map: None,
+            constants: None,
+            predicates: None,
+            functions: None,
         };
     }
 
@@ -583,6 +776,38 @@ impl<'a> DomainParser<'a> {
             return self.reqs == 0 || b > 0;
         }
         b > 0
+    }
+
+    fn get_const(&self, tok: &Token, name: &str) -> Result<&Constant, ParseError> {
+        let map = self.const_map.expect("constant map not set for parser");
+        if let Some(&id) = map.get(name) {
+            let consts = self.constants.expect("constant list not set for parser");
+            return Ok(&consts[id]);
+        }
+        let s = format!("constant, {}, is not defined", name);
+        Err(self.semantic(tok, &s))
+    }
+
+    fn get_pred(&self, tok: &Token, name: &str, terms: &[Term]) -> Result<&Predicate, ParseError> {
+        let key = Signature::create_key(name, terms.len());
+        let map = self.pred_map.expect("predicate map not set for parser");
+        if let Some(&id) = map.get(&key) {
+            let preds = self.predicates.expect("predicate list not set for parser");
+            return Ok(&preds[id]);
+        }
+        let s = format!("predicate, {}, is not defined", name);
+        Err(self.semantic(tok, &s))
+    }
+
+    fn get_func(&self, tok: &Token, name: &str, terms: &[Term]) -> Result<&Predicate, ParseError> {
+        let key = Signature::create_key(name, terms.len());
+        let map = self.func_map.expect("function map not set for parser");
+        if let Some(&id) = map.get(&key) {
+            let funcs = self.predicates.expect("function list not set for parser");
+            return Ok(&funcs[id]);
+        }
+        let s = format!("function, {}, is not defined", name);
+        Err(self.semantic(tok, &s))
     }
 
     /// `top_level` parses the top level forms of a PDDL domain.
@@ -772,6 +997,22 @@ impl<'a> DomainParser<'a> {
             if t.what == what {
                 self.last_token = None;
                 return true;
+            }
+        }
+        false
+    }
+
+    /// `next_ident_is` is like `next_token_is` but only applies if the
+    /// previous unconsumed token is a `TokenType::Ident` and its string
+    /// form is case insensitive equal to `ident`.
+    fn next_ident_is(&mut self, ident: &str) -> bool {
+        if let Some(t) = self.last_token {
+            if t.is_keyword() {
+                let s = t.to_str(self.contents);
+                if s.eq_ignore_ascii_case(ident) {
+                    self.last_token = None;
+                    return true;
+                }
             }
         }
         false
@@ -1077,6 +1318,13 @@ impl<'a> DomainParser<'a> {
 
     fn semantic(&self, t: &Token, s: &str) -> ParseError {
         ParseError::semantic(t.line, t.col, s)
+    }
+
+    fn check_requirement(&self, t: &Token, r: Requirement, s: &str) -> Result<(), ParseError> {
+        if !self.has_requirement(r) {
+            return Err(ParseError::missing(t.line, t.col, r, s));
+        }
+        Ok(())
     }
 
     /// `parse_types` extracts all the `:types` out from a PDDL domain.  Aside
@@ -1548,16 +1796,31 @@ impl<'a> DomainParser<'a> {
 
     /// `action` parses an :action definition.  Note that the ActionId is not
     /// assigned.
-    fn action(&mut self, types: &Types) -> Result<ParseResult, ParseError> {
-        let act_name = self.next_ident()?;
-        let mut result = ParseResult::with_name("");
-        let mut action = Action::new(act_name.to_str(self.contents));
+    fn action(&mut self) -> Result<ParseResult, ParseError> {
+        let name = self.next_ident()?;
+        let mut action = Action::new(name.to_str(self.contents));
+        let mut stack = ParamStack::new();
 
         self.specific_keyword(":parameters")?;
-        action.params = self.typed_list_variable(types)?;
-        action.line = act_name.line;
-        action.col = act_name.col;
+        stack.push(self.typed_list_variable()?);
 
+        self.check_next_is_one_of(&[":precondition", ":effect", ")"])?;
+        if self.next_keyword_is(":precondition") {
+            action.precondition = self.pre_goal(&mut stack)?;
+        }
+
+        self.check_next_is_one_of(&[":effect", ")"])?;
+        if self.next_keyword_is(":effect") {
+            panic!("TODO: need to parse :action effects");
+        }
+
+        self.consume(TokenType::RParen)?;
+
+        action.line = name.line;
+        action.col = name.col;
+        action.params = stack.pop().unwrap();
+
+        let mut result = ParseResult::with_name("");
         result.what = ParsingWhat::Action;
         result.action = Some(action);
 
@@ -1567,7 +1830,7 @@ impl<'a> DomainParser<'a> {
     /// `typed_list_variable` returns the variable parameters that are associated with
     /// variable list declarations for :action parameters, forall goal, and other such
     /// constructs.  One or more variable parameters may or may not not have types.
-    fn typed_list_variable(&mut self, types: &Types) -> Result<Vec<Param>, ParseError> {
+    fn typed_list_variable(&mut self) -> Result<Vec<Param>, ParseError> {
         let mut params: Vec<Param> = vec![];
 
         self.consume(TokenType::LParen)?;
@@ -1587,6 +1850,7 @@ impl<'a> DomainParser<'a> {
 
             self.check_next_is_one_of_or_var(&["-", ")"])?;
 
+            let types = &self.types.expect("no types for parsing");
             let type_ids = if self.next_token_is(TokenType::Minus) {
                 self.collect_types(types)?
             } else {
@@ -1610,6 +1874,749 @@ impl<'a> DomainParser<'a> {
             params.push(param);
         }
     }
+
+    /// `pre_goal` parses a :precondition goal description.
+    fn pre_goal(&mut self, stack: &mut ParamStack) -> Result<Option<Goal>, ParseError> {
+        self.consume(TokenType::LParen)?;
+
+        let tok = self.check_next_is_one_of_or_ident(&[
+            "preference",
+            "forall",
+            "exists",
+            "and",
+            "or",
+            "not",
+            "imply",
+            "=",
+            ">",
+            "<",
+            ">=",
+            "<=",
+            ")",
+        ])?;
+
+        let result = if self.next_token_is(TokenType::RParen) {
+            Ok(None)
+        } else if self.next_ident_is("and") {
+            self.check_next_token_is_one_of(&[TokenType::LParen, TokenType::RParen])?;
+
+            if self.next_token_is(TokenType::RParen) {
+                Ok(Some(Goal::And(vec![])))
+            } else {
+                let mut goals: Vec<Goal> = vec![];
+                while let Some(g) = self.pre_goal(stack)? {
+                    goals.push(g);
+                }
+                Ok(Some(Goal::And(goals)))
+            }
+        } else if self.next_ident_is("preference") {
+            self.check_requirement(&tok, Requirement::Preferences, "preference goal")?;
+
+            let t = self.check_next_is_one_of_or_ident(&["("])?;
+            let s = if t.is_left() {
+                "".to_string()
+            } else {
+                self.consume_ident()?.to_ascii_lowercase()
+            };
+            let g = Box::new(self.goal(stack)?);
+
+            Ok(Some(Goal::Preference(s, g)))
+        } else if self.next_ident_is("forall") {
+            self.check_requirement(&tok, Requirement::UniversalPreconditions, "forall goal")?;
+
+            stack.push(self.typed_list_variable()?);
+            if let Some(g) = self.pre_goal(stack)? {
+                let p = stack.pop().unwrap();
+                Ok(Some(Goal::Forall(p, Box::new(g))))
+            } else {
+                Err(self.semantic(&tok, "forall condition missing valid goal description"))
+            }
+        } else if self.next_ident_is("exists") {
+            self.check_requirement(&tok, Requirement::ExistentialPreconditions, "exists goal")?;
+
+            stack.push(self.typed_list_variable()?);
+            let g = self.goal(stack)?;
+            let p = stack.pop().unwrap();
+            Ok(Some(Goal::Exists(p, Box::new(g))))
+        } else if self.next_ident_is("not") {
+            let g = self.goal(stack)?;
+
+            if let Goal::Pred(_, _) = &g {
+                self.check_requirement(&tok, Requirement::NegativePreconditions, "not goal")?;
+            } else if let Goal::EqualTerms(_, _) = &g {
+                self.check_requirement(&tok, Requirement::NegativePreconditions, "not goal")?;
+            } else {
+                self.check_requirement(&tok, Requirement::DisjunctivePreconditions, "not goal")?;
+            }
+            Ok(Some(Goal::Not(Box::new(g))))
+        } else if self.next_ident_is("or") {
+            self.check_requirement(&tok, Requirement::DisjunctivePreconditions, "or goal")?;
+            self.check_next_token_is_one_of(&[TokenType::LParen, TokenType::RParen])?;
+
+            if self.next_token_is(TokenType::RParen) {
+                Ok(Some(Goal::Or(vec![])))
+            } else {
+                let mut goals: Vec<Goal> = vec![];
+                while let Some(g) = self.pre_goal(stack)? {
+                    goals.push(g);
+                }
+                Ok(Some(Goal::Or(goals)))
+            }
+        } else if self.next_ident_is("imply") {
+            self.check_requirement(&tok, Requirement::DisjunctivePreconditions, "imply goal")?;
+
+            let ant = Box::new(self.goal(stack)?);
+            let con = Box::new(self.goal(stack)?);
+
+            Ok(Some(Goal::Imply(ant, con)))
+        } else if self.next_token_is(TokenType::Equal) {
+            Ok(Some(self.equality(&tok, stack)?))
+        } else if self.next_token_is(TokenType::Greater) {
+            self.check_requirement(&tok, Requirement::NumericFluents, "> goal")?;
+
+            let lexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has none"));
+            };
+            let rexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has one"));
+            };
+
+            Ok(Some(Goal::Greater(lexp, rexp)))
+        } else if self.next_token_is(TokenType::GreaterEq) {
+            self.check_requirement(&tok, Requirement::NumericFluents, ">= goal")?;
+
+            let lexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has none"));
+            };
+            let rexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has one"));
+            };
+
+            Ok(Some(Goal::GreaterEq(lexp, rexp)))
+        } else if self.next_token_is(TokenType::Less) {
+            self.check_requirement(&tok, Requirement::NumericFluents, "< goal")?;
+
+            let lexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has none"));
+            };
+            let rexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has one"));
+            };
+            Ok(Some(Goal::Less(lexp, rexp)))
+        } else if self.next_token_is(TokenType::LessEq) {
+            self.check_requirement(&tok, Requirement::NumericFluents, "<= goal")?;
+
+            let lexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has none"));
+            };
+            let rexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has one"));
+            };
+            Ok(Some(Goal::LessEq(lexp, rexp)))
+        } else {
+            let name = self.consume_ident()?;
+            let mut terms: Vec<Term> = vec![];
+            let mut tokens: Vec<Token> = vec![];
+
+            while let Some(t) = self.term(stack)? {
+                terms.push(t.what);
+                tokens.push(t.tok);
+            }
+            let p = self.get_pred(&tok, &name, &terms)?;
+            for i in 0..terms.len() {
+                let ttypes = self.term_types(&terms[i]);
+                let ptypes = &p.params[i].types;
+                self.check_subset_types(&tokens[i], ttypes, ptypes)?;
+            }
+            Ok(Some(Goal::Pred(p.id, terms)))
+        };
+        self.consume(TokenType::RParen)?;
+
+        result
+    }
+
+    /// `goal` parses a general goal description.
+    fn goal(&mut self, stack: &mut ParamStack) -> Result<Goal, ParseError> {
+        self.consume(TokenType::LParen)?;
+
+        let tok = self.check_next_is_one_of_or_ident(&[
+            "forall", "exists", "and", "or", "not", "imply", "=", ">", "<", ">=", "<=",
+        ])?;
+
+        let result = if self.next_ident_is("and") {
+            let mut goals: Vec<Goal> = vec![];
+            loop {
+                self.check_next_token_is_one_of(&[TokenType::LParen, TokenType::RParen])?;
+
+                if self.next_token_is(TokenType::RParen) {
+                    break;
+                } else {
+                    goals.push(self.goal(stack)?);
+                }
+            }
+            Ok(Goal::And(goals))
+        } else if self.next_ident_is("forall") {
+            self.check_requirement(&tok, Requirement::UniversalPreconditions, "forall goal")?;
+
+            stack.push(self.typed_list_variable()?);
+            let g = Box::new(self.goal(stack)?);
+            let p = stack.pop().unwrap();
+            Ok(Goal::Forall(p, g))
+        } else if self.next_ident_is("exists") {
+            self.check_requirement(&tok, Requirement::ExistentialPreconditions, "exists goal")?;
+
+            stack.push(self.typed_list_variable()?);
+            let g = Box::new(self.goal(stack)?);
+            let p = stack.pop().unwrap();
+            Ok(Goal::Exists(p, g))
+        } else if self.next_ident_is("not") {
+            let g = self.goal(stack)?;
+
+            if let Goal::Pred(_, _) = &g {
+                self.check_requirement(&tok, Requirement::NegativePreconditions, "not goal")?;
+            } else if let Goal::EqualTerms(_, _) = &g {
+                self.check_requirement(&tok, Requirement::NegativePreconditions, "not goal")?;
+            } else {
+                self.check_requirement(&tok, Requirement::DisjunctivePreconditions, "not goal")?;
+            }
+            Ok(Goal::Not(Box::new(g)))
+        } else if self.next_ident_is("or") {
+            self.check_requirement(&tok, Requirement::DisjunctivePreconditions, "or goal")?;
+
+            let mut goals: Vec<Goal> = vec![];
+            loop {
+                self.check_next_token_is_one_of(&[TokenType::LParen, TokenType::RParen])?;
+
+                if self.next_token_is(TokenType::RParen) {
+                    break;
+                } else {
+                    goals.push(self.goal(stack)?);
+                }
+            }
+            Ok(Goal::Or(goals))
+        } else if self.next_ident_is("imply") {
+            self.check_requirement(&tok, Requirement::DisjunctivePreconditions, "imply goal")?;
+
+            let ant = Box::new(self.goal(stack)?);
+            let con = Box::new(self.goal(stack)?);
+
+            Ok(Goal::Imply(ant, con))
+        } else if self.next_token_is(TokenType::Equal) {
+            Ok(self.equality(&tok, stack)?)
+        } else if self.next_token_is(TokenType::Greater) {
+            self.check_requirement(&tok, Requirement::NumericFluents, "> goal")?;
+
+            let lexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has none"));
+            };
+            let rexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has one"));
+            };
+            Ok(Goal::Greater(lexp, rexp))
+        } else if self.next_token_is(TokenType::GreaterEq) {
+            self.check_requirement(&tok, Requirement::NumericFluents, ">= goal")?;
+
+            let lexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has none"));
+            };
+            let rexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has one"));
+            };
+            Ok(Goal::Greater(lexp, rexp))
+        } else if self.next_token_is(TokenType::Less) {
+            self.check_requirement(&tok, Requirement::NumericFluents, "< goal")?;
+
+            let lexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has none"));
+            };
+            let rexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has one"));
+            };
+            Ok(Goal::Less(lexp, rexp))
+        } else if self.next_token_is(TokenType::LessEq) {
+            self.check_requirement(&tok, Requirement::NumericFluents, "<= goal")?;
+
+            let lexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has none"));
+            };
+            let rexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                return Err(self.semantic(&tok, "> operator requires two expression but has one"));
+            };
+            Ok(Goal::LessEq(lexp, rexp))
+        } else {
+            let name = self.consume_ident()?;
+            let mut terms: Vec<Term> = vec![];
+            let mut tokens: Vec<Token> = vec![];
+
+            while let Some(t) = self.term(stack)? {
+                terms.push(t.what);
+                tokens.push(t.tok);
+            }
+            let p = self.get_pred(&tok, &name, &terms)?;
+            for i in 0..terms.len() {
+                let ttypes = self.term_types(&terms[i]);
+                let ptypes = &p.params[i].types;
+                self.check_subset_types(&tokens[i], ttypes, ptypes)?;
+            }
+            Ok(Goal::Pred(p.id, terms))
+        };
+        self.consume(TokenType::RParen)?;
+
+        result
+    }
+
+    fn equality(&mut self, eqtok: &Token, stack: &mut ParamStack) -> Result<Goal, ParseError> {
+        let left = next_token!(self, "number", "identifier", "variable", "(")?;
+        let mut left_term = Term::Const(0);
+        let mut left_fexp = Fexp::Number(0.0);
+        let mut left_side_is_term = false;
+
+        if left.is_left() {
+            match self.term_or_fexp(stack)? {
+                Ok(t) => {
+                    left_term = t;
+                    left_side_is_term = true;
+                    // It's unknown if the left side is a term if the Term is
+                    // is function reference.
+                    if let Term::Func(_, _) = &left_term {
+                        left_side_is_term = false;
+                    }
+                }
+                Err(f) => left_fexp = f,
+            }
+        } else if left.is_var() {
+            left_side_is_term = true;
+
+            let var = left.to_str(self.contents);
+            if let Some(p) = stack.find(self.contents, var) {
+                left_term = Term::Var(p.types.clone());
+            } else {
+                let s = format!("variable, {}, not defined", var);
+                return Err(self.semantic(&left, &s));
+            }
+        } else if left.is_ident() {
+            let name = left.to_str(self.contents).to_ascii_lowercase();
+            if let Some(&id) = self.const_map.unwrap().get(&name) {
+                left_side_is_term = true;
+                left_term = Term::Const(id);
+            } else {
+                left_fexp = Fexp::FnSymbol(name);
+            }
+        } else if let TokenType::Number(val, _, _) = left.what {
+            left_fexp = Fexp::Number(val);
+        } else {
+            return expect!(self, left, "identifier", "*", "+", "/", "-",);
+        }
+
+        let result = if left_side_is_term {
+            self.check_requirement(&eqtok, Requirement::Equality, "= goal")?;
+
+            if let Some(info) = self.term(stack)? {
+                Ok(Goal::EqualTerms(left_term, info.what))
+            } else {
+                Err(self.semantic(&eqtok, "= needs requires terms but has one"))
+            }
+        } else if left_term.is_func() {
+            match self.term_or_fexp(stack)? {
+                Ok(right_term) => {
+                    if let Term::Func(right_id, right_terms) = right_term {
+                        let left_id: FuncId;
+                        let left_terms: Vec<Term>;
+
+                        if let Term::Func(id, terms) = left_term {
+                            left_id = id;
+                            left_terms = terms;
+                        } else {
+                            panic!("Term::is_func() doesn't match correctly");
+                        }
+
+                        let funcs = self.functions.unwrap();
+                        let left_fn = &funcs[left_id];
+                        let right_fn = &funcs[right_id];
+                        let ltypes = &left_fn.return_types;
+                        let rtypes = &right_fn.return_types;
+
+                        if left_fn.returns_number && right_fn.returns_number {
+                            self.check_requirement(&eqtok, Requirement::NumericFluents, "= goal")?;
+                            let lexp = Fexp::Func(left_id, left_terms);
+                            let rexp = Fexp::Func(right_id, right_terms);
+                            Ok(Goal::EqualFexps(lexp, rexp))
+                        } else if ltypes.len() > 0 && rtypes.len() > 0 {
+                            self.check_requirement(&eqtok, Requirement::ObjectFluents, "= goal")?;
+                            let lterm = Term::Func(left_id, left_terms);
+                            let rterm = Term::Func(right_id, right_terms);
+                            Ok(Goal::EqualTerms(lterm, rterm))
+                        } else {
+                            let s = "left and right functions both don't return either both numbers or both objects";
+                            Err(self.semantic(eqtok, s))
+                        }
+                    } else {
+                        self.check_requirement(&eqtok, Requirement::ObjectFluents, "= goal")?;
+                        Ok(Goal::EqualTerms(left_term, right_term))
+                    }
+                }
+                Err(f) => {
+                    let left_id: FuncId;
+                    let left_terms: Vec<Term>;
+
+                    if let Term::Func(id, terms) = left_term {
+                        left_id = id;
+                        left_terms = terms;
+                    } else {
+                        panic!("Term::is_fun() doesn't match correctly");
+                    }
+                    let func = Fexp::Func(left_id, left_terms);
+                    Ok(Goal::EqualFexps(func, f))
+                }
+            }
+        } else {
+            self.check_requirement(&eqtok, Requirement::NumericFluents, "= goal")?;
+
+            if let Some(rexp) = self.fexp(stack)? {
+                Ok(Goal::EqualFexps(left_fexp, rexp))
+            } else {
+                Err(self.semantic(&eqtok, "= requires two f-exp but has one"))
+            }
+        };
+
+        match &result {
+            Ok(Goal::EqualTerms(lterm, rterm)) => {
+                let ltypes = self.term_types(lterm);
+                let rtypes = self.term_types(rterm);
+                if let Err(_) = self.check_subset_types(&eqtok, ltypes, rtypes) {
+                    return Err(
+                        self.semantic(eqtok, "left and right terms don't have compatible types")
+                    );
+                }
+            }
+            _ => (),
+        }
+        result
+    }
+
+    fn fexp(&mut self, stack: &mut ParamStack) -> Result<Option<Fexp>, ParseError> {
+        let tok = next_token!(self, "number", "identifier", "(", ")")?;
+
+        if tok.is_right() {
+            Ok(None)
+        } else if tok.is_left() {
+            let tok = next_token!(self, "identifier", "*", "+", "/", "-")?;
+
+            if tok.is_ident() {
+                let mut terms: Vec<Term> = vec![];
+                let mut tokens: Vec<Token> = vec![];
+
+                while let Some(t) = self.term(stack)? {
+                    terms.push(t.what);
+                    tokens.push(t.tok);
+                }
+                let name = tok.to_str(self.contents);
+                let func = self.get_func(&tok, &name, &terms)?;
+
+                for i in 0..terms.len() {
+                    let ttypes = self.term_types(&terms[i]);
+                    let ftypes = &func.params[i].types;
+                    self.check_subset_types(&tokens[i], ttypes, ftypes)?;
+                }
+                let id = func.id;
+
+                self.consume(TokenType::RParen)?;
+                Ok(Some(Fexp::Func(id, terms)))
+            } else if tok.what == TokenType::Mult
+                || tok.what == TokenType::Plus
+                || tok.what == TokenType::Div
+                || tok.what == TokenType::Minus
+            {
+                let lexp = if let Some(exp) = self.fexp(stack)? {
+                    exp
+                } else {
+                    let n = tok.to_str(self.contents);
+                    let s = format!("expecting f-exp after {} but found none", n);
+                    return Err(self.semantic(&tok, &s));
+                };
+
+                match tok.what {
+                    TokenType::Mult => {
+                        let mut rest: Vec<Fexp> = vec![];
+                        while let Some(exp) = self.fexp(stack)? {
+                            rest.push(exp);
+                        }
+                        Ok(Some(Fexp::Mult(Box::new(lexp), rest)))
+                    }
+                    TokenType::Plus => {
+                        let mut rest: Vec<Fexp> = vec![];
+                        while let Some(exp) = self.fexp(stack)? {
+                            rest.push(exp);
+                        }
+                        Ok(Some(Fexp::Add(Box::new(lexp), rest)))
+                    }
+                    TokenType::Div => {
+                        if let Some(rexp) = self.fexp(stack)? {
+                            Ok(Some(Fexp::Div(Box::new(lexp), Box::new(rexp))))
+                        } else {
+                            return Err(self.semantic(
+                                &tok,
+                                "expecting second f-exp for / operator but found none",
+                            ));
+                        }
+                    }
+                    TokenType::Minus => {
+                        if let Some(rexp) = self.fexp(stack)? {
+                            Ok(Some(Fexp::Sub(Box::new(lexp), Box::new(rexp))))
+                        } else {
+                            Ok(Some(Fexp::Neg(Box::new(lexp))))
+                        }
+                    }
+                    _ => expect!(self, tok, "identifier", "*", "+", "/", "-"),
+                }
+            } else {
+                expect!(self, tok, "identifier", "*", "+", "/", "-")
+            }
+        } else if tok.is_ident() {
+            let sym = tok.to_str(self.contents).to_ascii_lowercase();
+            Ok(Some(Fexp::FnSymbol(sym)))
+        } else if let TokenType::Number(num, _, _) = tok.what {
+            Ok(Some(Fexp::Number(num)))
+        } else {
+            expect!(self, tok, "number", "identifier", "(", ")")
+        }
+    }
+
+    /// `term` parses a predicate or function term (i.e. argument).
+    fn term(&mut self, stack: &mut ParamStack) -> Result<Option<TermInfo>, ParseError> {
+        let tok = next_token!(self, "identifier", "variable", "(", ")")?;
+        let result: Term;
+
+        if tok.is_right() {
+            return Ok(None);
+        } else if tok.is_ident() {
+            let n = tok.to_str(self.contents);
+            let c = self.get_const(&tok, n)?;
+            result = Term::Const(c.id);
+        } else if tok.is_var() {
+            let var = tok.to_str(self.contents);
+            if let Some(p) = stack.find(self.contents, var) {
+                result = Term::Var(p.types.clone());
+            } else {
+                let s = format!("variable, {}, not defined", var);
+                return Err(self.semantic(&tok, &s));
+            }
+        } else if tok.is_left() {
+            let tok = self.next_ident()?;
+            let mut terms: Vec<Term> = vec![];
+            let mut tokens: Vec<Token> = vec![];
+
+            self.check_requirement(&tok, Requirement::ObjectFluents, "function term")?;
+
+            while let Some(t) = self.term(stack)? {
+                terms.push(t.what);
+                tokens.push(t.tok);
+            }
+            let name = tok.to_str(self.contents);
+            let func = self.get_func(&tok, &name, &terms)?;
+
+            for i in 0..terms.len() {
+                let ttypes = self.term_types(&terms[i]);
+                let ftypes = &func.params[i].types;
+                self.check_subset_types(&tokens[i], ttypes, ftypes)?;
+            }
+
+            result = Term::Func(func.id, terms);
+            self.consume(TokenType::RParen)?;
+        } else {
+            return expect!(self, tok, "identifier", "variable", "(", ")");
+        };
+
+        Ok(Some(TermInfo { what: result, tok }))
+    }
+
+    /// `term_types` returns the `TypeId`s that are associated with the
+    /// given `term`.
+    fn term_types(&self, term: &'a Term) -> &'a [TypeId] {
+        match term {
+            Term::Var(vtypes) => &vtypes,
+            Term::Const(id) => {
+                let s = &self.constants.unwrap();
+                let c = &s[*id];
+                &c.types
+            }
+            Term::Func(id, _) => {
+                let s = &self.functions.unwrap();
+                let f = &s[*id];
+                &f.return_types
+            }
+        }
+    }
+
+    fn term_or_fexp(&mut self, stack: &mut ParamStack) -> Result<Result<Term, Fexp>, ParseError> {
+        let tok = next_token!(self, "identifier", "*", "+", "/", "-",)?;
+
+        if tok.is_ident() {
+            let mut terms: Vec<Term> = vec![];
+            let mut tokens: Vec<Token> = vec![];
+
+            while let Some(t) = self.term(stack)? {
+                terms.push(t.what);
+                tokens.push(t.tok);
+            }
+            let name = tok.to_str(self.contents);
+            let func = self.get_func(&tok, &name, &terms)?;
+
+            for i in 0..terms.len() {
+                let ttypes = self.term_types(&terms[i]);
+                let ftypes = &func.params[i].types;
+                self.check_subset_types(&tokens[i], ttypes, ftypes)?;
+            }
+            let id = func.id;
+
+            self.consume(TokenType::RParen)?;
+            Ok(Ok(Term::Func(id, terms)))
+        } else if tok.what == TokenType::Mult
+            || tok.what == TokenType::Plus
+            || tok.what == TokenType::Div
+            || tok.what == TokenType::Minus
+        {
+            let lexp = if let Some(exp) = self.fexp(stack)? {
+                exp
+            } else {
+                let n = tok.to_str(self.contents);
+                let s = format!("expecting f-exp after {} but found none", n);
+                return Err(self.semantic(&tok, &s));
+            };
+
+            match tok.what {
+                TokenType::Mult => {
+                    let mut rest: Vec<Fexp> = vec![];
+                    while let Some(exp) = self.fexp(stack)? {
+                        rest.push(exp);
+                    }
+                    Ok(Err(Fexp::Mult(Box::new(lexp), rest)))
+                }
+                TokenType::Plus => {
+                    let mut rest: Vec<Fexp> = vec![];
+                    while let Some(exp) = self.fexp(stack)? {
+                        rest.push(exp);
+                    }
+                    Ok(Err(Fexp::Add(Box::new(lexp), rest)))
+                }
+                TokenType::Div => {
+                    if let Some(rexp) = self.fexp(stack)? {
+                        Ok(Err(Fexp::Div(Box::new(lexp), Box::new(rexp))))
+                    } else {
+                        return Err(self.semantic(
+                            &tok,
+                            "expecting second f-exp for / operator but found none",
+                        ));
+                    }
+                }
+                TokenType::Minus => {
+                    if let Some(rexp) = self.fexp(stack)? {
+                        Ok(Err(Fexp::Sub(Box::new(lexp), Box::new(rexp))))
+                    } else {
+                        Ok(Err(Fexp::Neg(Box::new(lexp))))
+                    }
+                }
+                _ => expect!(self, tok, "identifier", "*", "+", "/", "-"),
+            }
+        } else {
+            expect!(self, tok, "identifier", "*", "+", "/", "-")
+        }
+    }
+
+    /// `check_subset_types` checks if any `TypeId` of `kids` is one or
+    /// or an ancestor of `parents`.
+    fn check_subset_types(
+        &self,
+        tok: &Token,
+        kids: &[TypeId],
+        parents: &[TypeId],
+    ) -> Result<(), ParseError> {
+        let types = &self.types.unwrap();
+        for &k in kids {
+            for &p in parents {
+                if k == p || types.is_child_an_ancestor_of(k, p) {
+                    return Ok(());
+                }
+            }
+        }
+        let name = tok.to_str(self.contents);
+        let mut tnames: Vec<&str> = vec![];
+
+        for &id in parents {
+            tnames.push(types.name_of(id));
+        }
+        let s = format!(
+            "none of the types for {} are one of or a subtype of {:?}",
+            name, tnames
+        );
+        Err(self.semantic(tok, &s))
+    }
+}
+
+/// `ParamStack` maintains a stack of `Param` lists which are built
+/// during the parsing of an `:action`, `forall` goal, `exists` goal,
+/// etc.  As parameter list are added, parameters will shadow previous
+/// parameters of the same name earlier in the stack.
+struct ParamStack {
+    params: Vec<Vec<Param>>,
+}
+
+impl ParamStack {
+    fn new() -> Self {
+        ParamStack { params: vec![] }
+    }
+
+    fn push(&mut self, p: Vec<Param>) {
+        self.params.push(p);
+    }
+
+    fn pop(&mut self) -> Option<Vec<Param>> {
+        self.params.pop()
+    }
+
+    fn find(&self, src: &str, var: &str) -> Option<&Param> {
+        for params in self.params.iter().rev() {
+            for p in params {
+                let name = &src[p.start..p.end];
+                if name.eq_ignore_ascii_case(var) {
+                    return Some(p);
+                }
+            }
+        }
+        None
+    }
 }
 
 /// `Signature` encapsulates the parsed result of a predicate or
@@ -1621,11 +2628,17 @@ struct Signature {
 
 impl Signature {
     /// `lookup_key` returns a key that can be used to see if the Signature
-    /// has already been declared.  The key will be a combination of the formula's
+    /// has already been declared.
+    fn lookup_key(&self) -> String {
+        Self::create_key(&self.name, self.params.len())
+    }
+
+    /// `create_key` returns a key that can be used to check if two different
+    /// signatures match.  The key will be a combination of the signatures's
     /// name along with its parameter arity and is composed of characters that is
     /// impossible to be a valid identifier.
-    fn lookup_key(&self) -> String {
-        format!("{}-**-{}-**-", self.name, self.params.len())
+    fn create_key(name: &str, arity: usize) -> String {
+        format!("{}-**-{}-**-", name, arity)
     }
 }
 
@@ -1634,6 +2647,7 @@ impl Signature {
 #[derive(Debug)]
 struct Types {
     types: HashMap<String, TypeId>, // Lowercased type names to their assigned TypeId.
+    names: Vec<String>,             // Lowercased names ordered by TypeId.
     parent_types: Vec<HashSet<TypeId>>, // Immediate parent TypeIds.  Vector is indexed by the child TypeId.
     child_types: Vec<HashSet<TypeId>>, // Immediate child TypeIds.  Vector is indexed by the parent TypeId.
     type_id: TypeId,                   // A TypeId counter.
@@ -1643,6 +2657,7 @@ impl Default for Types {
     fn default() -> Self {
         Types {
             types: HashMap::new(),
+            names: vec![],
             type_id: 0,
             parent_types: vec![],
             child_types: vec![],
@@ -1658,6 +2673,11 @@ impl Types {
         self.types.get(&n).map(|&id| id)
     }
 
+    /// `name_of` returns the type name for of the given `id`.
+    fn name_of(&self, id: TypeId) -> &str {
+        &self.names[id]
+    }
+
     /// `insert` inserts `s` and assigns it a `TypeId` if it hasn't already
     /// been seen.
     fn insert(&mut self, s: &str) -> TypeId {
@@ -1666,6 +2686,7 @@ impl Types {
             *self.types.get(&id).unwrap()
         } else {
             let tid = self.type_id;
+            self.names.push(id.clone());
             self.types.insert(id, tid);
             self.type_id += 1;
             self.parent_types.push(HashSet::new());
@@ -1709,6 +2730,22 @@ impl Types {
                 any = any || self.check_circular_parent(child, pid);
             }
             any
+        }
+    }
+
+    /// `is_child_an_ancestor_of` returns true if `child` is an ancestor
+    /// of `parent`.
+    fn is_child_an_ancestor_of(&self, child: TypeId, parent: TypeId) -> bool {
+        let ct = &self.child_types[parent];
+        if ct.contains(&child) {
+            true
+        } else {
+            for &id in ct.iter() {
+                if self.is_child_an_ancestor_of(child, id) {
+                    return true;
+                }
+            }
+            false
         }
     }
 }
