@@ -3,6 +3,7 @@ use std::{error, fmt, iter::Iterator};
 use super::{
     reqs::{Reqs, Requirement},
     scanner::{Token, TokenType},
+    types::{TypeId, Types},
 };
 
 pub struct Parser<'a> {
@@ -12,6 +13,7 @@ pub struct Parser<'a> {
     col: usize,          // Current column of parse.
     line: usize,         // Current line of parse.
     reqs: Reqs,          // Known requirements.
+                         // types: Option<&'a Types>, // Collected type declarations.
 }
 
 macro_rules! try_next {
@@ -41,7 +43,7 @@ impl<'a> Parser<'a> {
         self.consume(TokenType::LParen)?;
         self.ident("domain")?;
 
-        let name = self.consume(TokenType::Ident)?.to_str(self.src);
+        let domain_name = self.consume(TokenType::Ident)?.to_str(self.src);
         self.consume(TokenType::RParen)?;
 
         const TOP_LEVEL_KEYWORDS: [TokenType; 9] = [
@@ -58,7 +60,7 @@ impl<'a> Parser<'a> {
         let mut top_keys = &TOP_LEVEL_KEYWORDS[0..9];
         let mut parse = Parse::default();
 
-        parse.name = name;
+        parse.name = domain_name;
 
         loop {
             let paren = self.expect(&[TokenType::LParen, TokenType::RParen], &[])?;
@@ -72,6 +74,18 @@ impl<'a> Parser<'a> {
                 top_keys = &top_keys[0..8];
                 if top_key.what == TokenType::Requirements {
                     parse.reqs = self.requirements()?;
+                    self.reqs = parse.reqs;
+                    continue;
+                }
+            }
+
+            if top_keys.len() == 8 {
+                top_keys = &top_keys[0..7];
+                if top_key.what == TokenType::Types {
+                    if !self.reqs.has(Requirement::Typing) {
+                        return Err(self.missing(Requirement::Typing, ":types"));
+                    }
+                    parse.types = self.parse_types()?;
                     continue;
                 }
             }
@@ -230,6 +244,111 @@ impl<'a> Parser<'a> {
             reqs.add(tok.what.to_requirement());
         }
     }
+
+    fn semantic(&self, s: &str) -> Error {
+        Error::semantic(self.line, self.col, s)
+    }
+
+    fn missing(&self, r: Requirement, s: &str) -> Error {
+        Error::missing(self.line, self.col, r, s)
+    }
+
+    /// `parse_types` extracts all the `:types` out from a PDDL domain.  Aside
+    /// from syntax errors, semantic errors are returned if `object` is
+    /// attempted to be a derived type or a type has circular inheritance.
+    fn parse_types(&mut self) -> Result<Types, Error> {
+        let mut types = Types::default();
+
+        types.insert("object");
+
+        loop {
+            let src = self.src;
+            let tok = self.expect(&[TokenType::Ident, TokenType::RParen], &[])?;
+
+            if tok.what == TokenType::RParen {
+                return Ok(types);
+            }
+
+            // Basic type declaration (:types vehicle).
+            let name = tok.to_str(src);
+            let mut siblings: Vec<(TypeId, Token)> = vec![(types.insert(name), *tok)];
+
+            if name.eq_ignore_ascii_case("object") {
+                return Err(self.semantic("object declared as a derived type"));
+            }
+
+            // Have one type now collect more to get a set of types that
+            // inherit from another (:types first second - parent).
+            'more_types: loop {
+                let tok = self.expect(
+                    &[TokenType::Ident, TokenType::Minus, TokenType::RParen],
+                    &[],
+                )?;
+
+                if tok.what == TokenType::RParen {
+                    return Ok(types);
+                }
+                if tok.what == TokenType::Ident {
+                    let s = tok.to_str(src);
+                    if s.eq_ignore_ascii_case("object") {
+                        return Err(self.semantic("object declared as a derived type"));
+                    }
+                    siblings.push((types.insert(s), *tok));
+                } else {
+                    // Reached inherintance, collect single or multiple parent types.
+                    self.type_declarations(|t| {
+                        let parent_name = t.to_str(src);
+                        let parent_id = types.insert(parent_name);
+
+                        for &(child_id, child_t) in &siblings {
+                            types.relate(child_id, parent_id);
+                            if types.has_circular_types(child_id) {
+                                let t = child_t;
+                                let s = format!(
+                                    "{} has circular inherintance with {}",
+                                    t.to_str(src),
+                                    parent_name
+                                );
+                                return Err(Error::semantic(t.line, t.col, &s));
+                            }
+                        }
+                        Ok(())
+                    })?;
+                    break 'more_types;
+                }
+            }
+        }
+    }
+
+    /// `type_declarations` parses the type declarations that follow a '-' in
+    /// some PDDL domain construct (e.g. ?a - (either foo bar) ?b - baz) and
+    /// calls `on_type` for each type encountered.
+    fn type_declarations<F>(&mut self, mut on_type: F) -> Result<(), Error>
+    where
+        F: FnMut(&Token) -> Result<(), Error>,
+    {
+        let tok = self.expect(&[TokenType::Ident, TokenType::LParen], &[])?;
+
+        if tok.what == TokenType::Ident {
+            on_type(tok)?;
+        } else if tok.what == TokenType::LParen {
+            self.ident("either")?;
+
+            // Must have at least one either type.
+            let first = self.consume(TokenType::Ident)?;
+            on_type(first)?;
+
+            // Get the rest of the either parent types.
+            loop {
+                let tok = self.expect(&[TokenType::Ident, TokenType::RParen], &[])?;
+                if tok.what == TokenType::RParen {
+                    return Ok(());
+                }
+                on_type(tok)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<'a> Iterator for Parser<'a> {
@@ -285,8 +404,8 @@ pub struct Parse<'a> {
     // what: ParsingWhat,          // What was parsed by this result.
     pub name: &'a str, // Name of a domain.
     pub reqs: Reqs,    // Requirements of the domain represented as bit vector.
+    pub types: Types,  // Types extracted from the domain.
 
-                       // types: Types,               // Types extracted from the domain.
                        // const_loc: Token,           // Token within the PDDL source where constants are located.
                        // pred_loc: Token,            // Token within the PDDL source where predicates are located.
                        // func_loc: Token,            // Token within the PDDL source where functions are located.
@@ -305,6 +424,7 @@ impl<'a> Default for Parse<'a> {
         Parse {
             name: "",
             reqs: Reqs::default(),
+            types: Types::default(),
         }
     }
 }
@@ -527,6 +647,44 @@ mod test {
         assert!(reqs.has(Requirement::Typing));
         assert!(reqs.has(Requirement::Equality));
         assert!(!reqs.has(Requirement::Strips));
+        Ok(())
+    }
+
+    #[test]
+    fn can_parse_types() -> Result<(), Error> {
+        const TEST: &'static str = "car truck motorcycle - vehicle
+             bicycle - object
+             moped - (either motorcycle bicycle)))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let types = parser.parse_types()?;
+
+        assert_eq!(types.get("object"), Some(0));
+        assert_eq!(types.get("car"), Some(1));
+        assert_eq!(types.get("truck"), Some(2));
+        assert_eq!(types.get("motorcycle"), Some(3));
+        assert_eq!(types.get("vehicle"), Some(4));
+        assert_eq!(types.get("bicycle"), Some(5));
+        assert_eq!(types.get("moped"), Some(6));
+
+        let object = types.get("object").unwrap();
+        let car = types.get("car").unwrap();
+        let truck = types.get("truck").unwrap();
+        let motorcycle = types.get("motorcycle").unwrap();
+        let vehicle = types.get("vehicle").unwrap();
+        let bicycle = types.get("bicycle").unwrap();
+        let moped = types.get("moped").unwrap();
+
+        assert!(types.is_child_an_ancestor_of(car, vehicle));
+        assert!(types.is_child_an_ancestor_of(truck, vehicle));
+        assert!(types.is_child_an_ancestor_of(motorcycle, vehicle));
+        assert!(types.is_child_an_ancestor_of(bicycle, object));
+        assert!(types.is_child_an_ancestor_of(moped, motorcycle));
+        assert!(types.is_child_an_ancestor_of(moped, bicycle));
+        assert!(types.is_child_an_ancestor_of(moped, object));
+        assert!(types.is_child_an_ancestor_of(moped, vehicle));
+
         Ok(())
     }
 }

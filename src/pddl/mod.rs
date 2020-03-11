@@ -10,6 +10,7 @@ use self::{
     parser::{Parse, Parser},
     reqs::Reqs,
     scanner::{Scanner, Token, TokenType},
+    types::{Types, TypeId},
 };
 
 pub use self::{
@@ -25,13 +26,13 @@ pub struct Domain {
     /// The parsed domain name.
     pub name: String,
 
-    reqs: Reqs, // Parsed (:requirements).
+    types: Types, // Parsed (:types).
+    reqs: Reqs,   // Parsed (:requirements).
 
-                // types: Types,               // Parsed (:types).
-                // predicates: Vec<Predicate>, // Parsed (:predicates) ordered by PredId.
-                // functions: Vec<Function>,   // Parsed (:functions) ordered by FuncId.
-                // constants: Vec<Constant>,   // Parsed (:constants) ordered by ConstId.
-                // actions: Vec<Action>,       // Parsed (:action ...) definitions.
+                  // predicates: Vec<Predicate>, // Parsed (:predicates) ordered by PredId.
+                  // functions: Vec<Function>,   // Parsed (:functions) ordered by FuncId.
+                  // constants: Vec<Constant>,   // Parsed (:constants) ordered by ConstId.
+                  // actions: Vec<Action>,       // Parsed (:action ...) definitions.
 }
 
 impl Domain {
@@ -72,6 +73,7 @@ impl Domain {
         let dom = Domain {
             name: result.name.to_string(),
             reqs: result.reqs,
+            types: result.types,
         };
 
         Ok(dom)
@@ -80,5 +82,15 @@ impl Domain {
     /// `has_requirement` returns true if this `Domain` has the requirement of `r`.
     pub fn has_requirement(&self, r: Requirement) -> bool {
         self.reqs.has(r)
+    }
+
+    /// `type_id` returns the TypeId associated with `name`, is it exists.
+    pub fn type_id(&self, name: &str) -> Option<TypeId> {
+        self.types.get(name)
+    }
+
+    /// `is_child_type_an_ancestor_of` returns true if `child` is an ancestor of `parent`.
+    pub fn is_child_type_an_ancestor_of(&self, child: TypeId, parent: TypeId) -> bool {
+        self.types.is_child_an_ancestor_of(child, parent)
     }
 }

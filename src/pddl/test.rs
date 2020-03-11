@@ -285,3 +285,140 @@ fn parse_requirements_fails_with_invalid_token() {
         panic!("Expected error but received successful domain parse");
     }
 }
+
+#[test]
+fn can_parse_types() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types car truck motorcycle - vehicle
+                   bicycle - object
+                   moped - (either motorcycle bicycle)))",
+    )?;
+
+    assert_eq!(d.type_id("object"), Some(0));
+    assert_eq!(d.type_id("car"), Some(1));
+    assert_eq!(d.type_id("truck"), Some(2));
+    assert_eq!(d.type_id("motorcycle"), Some(3));
+    assert_eq!(d.type_id("vehicle"), Some(4));
+    assert_eq!(d.type_id("bicycle"), Some(5));
+    assert_eq!(d.type_id("moped"), Some(6));
+
+    let object = d.type_id("object").unwrap();
+    let car = d.type_id("car").unwrap();
+    let truck = d.type_id("truck").unwrap();
+    let motorcycle = d.type_id("motorcycle").unwrap();
+    let vehicle = d.type_id("vehicle").unwrap();
+    let bicycle = d.type_id("bicycle").unwrap();
+    let moped = d.type_id("moped").unwrap();
+
+    assert!(d.is_child_type_an_ancestor_of(car, vehicle));
+    assert!(d.is_child_type_an_ancestor_of(truck, vehicle));
+    assert!(d.is_child_type_an_ancestor_of(motorcycle, vehicle));
+    assert!(d.is_child_type_an_ancestor_of(bicycle, object));
+    assert!(d.is_child_type_an_ancestor_of(moped, motorcycle));
+    assert!(d.is_child_type_an_ancestor_of(moped, bicycle));
+    assert!(d.is_child_type_an_ancestor_of(moped, object));
+    assert!(d.is_child_type_an_ancestor_of(moped, vehicle));
+
+    Ok(())
+}
+
+#[test]
+fn has_default_object() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types))",
+    )?;
+    assert_eq!(d.type_id("object"), Some(0));
+    Ok(())
+}
+
+#[test]
+fn object_can_not_be_a_new_type() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types object))",
+    );
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "object declared as a derived type");
+            return;
+        }
+    }
+    panic!("object was allowed to be a derived type");
+}
+
+#[test]
+fn object_can_not_be_a_new_type_after_first_type() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types car object))",
+    );
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "object declared as a derived type");
+            return;
+        }
+    }
+    panic!("object was allowed to be a derived type");
+}
+
+#[test]
+fn circular_inheritance_detected_1() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types shape - object
+                   square - (either rectangle shape)
+                   rectangle - square))",
+    );
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "rectangle has circular inherintance with square");
+            return;
+        }
+    }
+    panic!("circular inheritance was not detected");
+}
+
+#[test]
+fn circular_inheritance_detected_2() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types shape - rectangle
+                   square - shape
+                   rectangle - (either square box)))",
+    );
+    // Circular inheritance from either type.
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "rectangle has circular inherintance with square");
+            return;
+        }
+    }
+    panic!("circular inheritance was not detected");
+}
+
+#[test]
+fn circular_inheritance_detected_3() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types shape - rectangle
+                   square - shape
+                   rectangle - (either box square)))",
+    );
+    // Circular inheritance from either type.
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "rectangle has circular inherintance with square");
+            return;
+        }
+    }
+    panic!("circular inheritance was not detected");
+}
