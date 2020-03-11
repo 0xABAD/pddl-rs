@@ -89,6 +89,69 @@ impl<'a> Parser<'a> {
                     continue;
                 }
             }
+
+            if top_keys.len() == 7 {
+                top_keys = &top_keys[0..6];
+                if top_key.what == TokenType::Constants {
+                    parse.const_pos = self.tokpos;
+                    self.balance_parens();
+                    continue;
+                }
+            }
+
+            if top_keys.len() == 6 {
+                top_keys = &top_keys[0..5];
+                if top_key.what == TokenType::Predicates {
+                    parse.pred_pos = self.tokpos;
+                    self.balance_parens();
+                    continue;
+                }
+            }
+
+            if top_keys.len() == 5 {
+                top_keys = &top_keys[0..4];
+                if top_key.what == TokenType::Functions {
+                    parse.func_pos = self.tokpos;
+                    self.balance_parens();
+                    continue;
+                }
+            }
+
+            if top_keys.len() == 4 {
+                top_keys = &top_keys[0..3];
+                if top_key.what == TokenType::Constraints {
+                    if !self.reqs.has(Requirement::Constraints) {
+                        return Err(self.missing(Requirement::Constraints, ":constraints section"));
+                    }
+                    parse.constraints_pos = self.tokpos;
+                    self.balance_parens();
+                    continue;
+                }
+            }
+
+            if top_key.what == TokenType::Action {
+                parse.action_pos.push(self.tokpos);
+                self.balance_parens();
+                continue;
+            }
+
+            if top_key.what == TokenType::DurativeAction {
+                if !self.reqs.has(Requirement::DurativeActions) {
+                    return Err(self.missing(Requirement::DurativeActions, ":durative-action"));
+                }
+                parse.daction_pos.push(self.tokpos);
+                self.balance_parens();
+                continue;
+            }
+
+            if top_key.what == TokenType::Derived {
+                if !self.reqs.has(Requirement::DerivedPredicates) {
+                    return Err(self.missing(Requirement::DerivedPredicates, ":derived predicate"));
+                }
+                parse.derived_pos.push(self.tokpos);
+                self.balance_parens();
+                continue;
+            }
         }
 
         if let Some(t) = self.next() {
@@ -195,6 +258,24 @@ impl<'a> Parser<'a> {
             return Err(Error::expect(self.line, self.col, have, &v));
         }
         Ok(tok)
+    }
+
+    /// `balance_parens` consumes tokens until the current count of parenthesis
+    /// reaches zero.  Initially, the count is one since it is expected that the
+    /// first left paren has already been consumed.
+    fn balance_parens(&mut self) {
+        let mut count = 1;
+
+        while let Some(tok) = self.next() {
+            if tok.what == TokenType::LParen {
+                count += 1;
+            } else if tok.what == TokenType::RParen {
+                count -= 1;
+                if count == 0 {
+                    return;
+                }
+            }
+        }
     }
 
     /// `requirements` parses the `:requirements` section of the
@@ -402,21 +483,20 @@ impl TokenType {
 #[derive(Debug)]
 pub struct Parse<'a> {
     // what: ParsingWhat,          // What was parsed by this result.
-    pub name: &'a str, // Name of a domain.
-    pub reqs: Reqs,    // Requirements of the domain represented as bit vector.
-    pub types: Types,  // Types extracted from the domain.
-
-                       // const_loc: Token,           // Token within the PDDL source where constants are located.
-                       // pred_loc: Token,            // Token within the PDDL source where predicates are located.
-                       // func_loc: Token,            // Token within the PDDL source where functions are located.
-                       // constraints: Token,         // Token within the PDDL source where constraints are located.
-                       // action_locs: Vec<Token>,    // Tokens where :actions begin in the PDDL source.
-                       // duratives: Vec<Token>,      // Tokens where :durative-actions begin in the PDDL source.
-                       // deriveds: Vec<Token>,       // Tokens where :derived functions begin in the PDDL source.
-                       // predicates: Vec<Predicate>, // Parsed predicate declarations.
-                       // functions: Vec<Function>,   // Parsed function declarations.
-                       // constants: Vec<Constant>,   // Parsed constant declarations.
-                       // action: Option<Action>,     // Parsed action definition.
+    pub name: &'a str,           // Name of a domain.
+    pub reqs: Reqs,              // Requirements of the domain represented as bit vector.
+    pub types: Types,            // Types extracted from the domain.
+    pub const_pos: usize, // Token position within the PDDL source where constants are located.
+    pub pred_pos: usize,  // Token position within the PDDL source where predicates are located.
+    pub func_pos: usize,  // Token position within the PDDL source where functions are located.
+    pub constraints_pos: usize, // Token position within the PDDL source where constraints are located.
+    pub action_pos: Vec<usize>, // Token positions where :actions begin in the PDDL source.
+    pub daction_pos: Vec<usize>, // Token positions where :durative-actions begin in the PDDL source.
+    pub derived_pos: Vec<usize>, // Token positions where :derived functions begin in the PDDL source.
+                                 // predicates: Vec<Predicate>, // Parsed predicate declarations.
+                                 // functions: Vec<Function>,   // Parsed function declarations.
+                                 // constants: Vec<Constant>,   // Parsed constant declarations.
+                                 // action: Option<Action>,     // Parsed action definition.
 }
 
 impl<'a> Default for Parse<'a> {
@@ -425,6 +505,13 @@ impl<'a> Default for Parse<'a> {
             name: "",
             reqs: Reqs::default(),
             types: Types::default(),
+            const_pos: 0,
+            pred_pos: 0,
+            func_pos: 0,
+            constraints_pos: 0,
+            action_pos: vec![],
+            daction_pos: vec![],
+            derived_pos: vec![],
         }
     }
 }
@@ -686,5 +773,175 @@ mod test {
         assert!(types.is_child_an_ancestor_of(moped, vehicle));
 
         Ok(())
+    }
+
+    #[test]
+    fn unbalanced_parens_in_constants() {
+        const TEST: &'static str = "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types item)
+           (:constants foo bar - item";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let result = parser.domain_top();
+
+        if let Err(e) = result {
+            match e.what {
+                ErrorType::Expect { have: _, expect: _ } => return,
+                _ => panic!("Invalid ErrorType -- have {:?}, want Expect", e.what),
+            }
+        } else {
+            panic!("Received successful parse when error should have occurred.");
+        }
+    }
+
+    #[test]
+    fn correct_constants_position() -> Result<(), Error> {
+        const TEST: &'static str = "(define (domain d) (:constants a b))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let result = parser.domain_top()?;
+
+        assert_eq!(result.const_pos, 8);
+        Ok(())
+    }
+
+    #[test]
+    fn correct_predicates_position() -> Result<(), Error> {
+        const TEST: &'static str = "(define (domain d) (:constants a b) (:predicates (a)))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let result = parser.domain_top()?;
+
+        assert_eq!(result.pred_pos, 13);
+        Ok(())
+    }
+
+    #[test]
+    fn correct_functions_position() -> Result<(), Error> {
+        const TEST: &'static str = "(define (domain d)
+           (:requirements :numeric-fluents)
+           (:functions (a)))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let result = parser.domain_top()?;
+
+        assert_eq!(result.func_pos, 12);
+        Ok(())
+    }
+
+    #[test]
+    fn correct_constraints_position() -> Result<(), Error> {
+        const TEST: &'static str = "(define (domain d)
+           (:requirements :constraints)
+           (:constraints (and)))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let result = parser.domain_top()?;
+
+        assert_eq!(result.constraints_pos, 12);
+        Ok(())
+    }
+
+    #[test]
+    fn correct_action_positions() -> Result<(), Error> {
+        const TEST: &'static str = "(define (domain d)
+           (:action a :parameters ())
+           (:action b :parameters ()))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let result = parser.domain_top()?;
+
+        assert_eq!(result.action_pos, vec![8, 15]);
+        Ok(())
+    }
+
+    #[test]
+    fn correct_durative_action_positions() -> Result<(), Error> {
+        const TEST: &'static str = "(define (domain d)
+           (:requirements :durative-actions)
+           (:durative-action a :parameters () :duration () :condition () :effect ())
+           (:durative-action b :parameters () :duration () :condition () :effect ()))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let result = parser.domain_top()?;
+
+        assert_eq!(result.daction_pos, vec![12, 28]);
+        Ok(())
+    }
+
+    #[test]
+    fn correct_derived_predicate_positions() -> Result<(), Error> {
+        const TEST: &'static str = "(define (domain d)
+           (:requirements :derived-predicates)
+           (:derived (a) (and))
+           (:derived (b) (and)))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let result = parser.domain_top()?;
+
+        assert_eq!(result.derived_pos, vec![12, 21]);
+        Ok(())
+    }
+
+    #[test]
+    fn durative_action_missing_requirement() {
+        const TEST: &'static str = "(define (domain d)
+           (:requirements :strips)
+           (:durative-action a :parameters () :duration () :condition () :effect ()))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+
+        if let Err(e) = parser.domain_top() {
+            if let ErrorType::MissingRequirement { req, what: _ } = e.what {
+                assert_eq!(req, Requirement::DurativeActions);
+                return;
+            }
+        }
+        panic!("Missing durative-actions requirement error not returned.");
+    }
+
+    #[test]
+    fn derived_predicate_missing_requirement() {
+        const TEST: &'static str = "(define (domain foo)
+           (:requirements :strips)
+           (:derived (a) (and)))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+
+        if let Err(e) = parser.domain_top() {
+            if let ErrorType::MissingRequirement { req, what: _ } = e.what {
+                assert_eq!(req, Requirement::DerivedPredicates);
+                return;
+            }
+        }
+        panic!("Missing derived-predicates requirement error not returned.");
+    }
+
+    #[test]
+    fn constraints_section_missing_requirement() {
+        const TEST: &'static str =
+            "(define (domain d) (:requirements :strips) (:constraints (and)))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+
+        if let Err(e) = parser.domain_top() {
+            if let ErrorType::MissingRequirement { req, what: _ } = e.what {
+                assert_eq!(req, Requirement::Constraints);
+                return;
+            }
+        }
+        panic!("Missing constraints requirement error not returned.");
     }
 }
