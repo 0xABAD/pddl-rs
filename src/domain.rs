@@ -1895,7 +1895,3 @@ impl fmt::Display for ParseErrorType {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "domain_test.rs"]
-mod test;

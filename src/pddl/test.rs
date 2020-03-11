@@ -977,3 +977,73 @@ fn constants_return_error_when_typing_not_declared() {
     }
     panic!("Missing :types requirement error not returned");
 }
+
+#[test]
+fn can_parse_action_params() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:action Bar :parameters())
+           (:action FUB
+             :parameters (?a - (either Sphere Square) ?b - BLOCK))
+           (:action baz
+             :parameters (?a - OBJECT ?b)))",
+    )?;
+
+    let bar = &d.actions[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params.len(), 0);
+
+    let fub = &d.actions[1];
+    assert_eq!(fub.id, 1);
+    assert_eq!(fub.name, "fub");
+    assert_eq!(fub.params[0].types, param!(2, 3).types);
+    assert_eq!(fub.params[1].types, param!(1).types);
+
+    let baz = &d.actions[2];
+    assert_eq!(baz.id, 2);
+    assert_eq!(baz.name, "baz");
+    assert_eq!(baz.params[0].types, param!(0).types);
+    assert_eq!(baz.params[1].types.len(), 0);
+
+    Ok(())
+}
+
+#[test]
+fn actions_collates_either_types() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:action bar :parameters (?a - square ?a - block)))",
+    )?;
+
+    let bar = &d.actions[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params.len(), 1);
+    assert_eq!(bar.params[0].types, vec![1, 2]);
+
+    Ok(())
+}
+
+#[test]
+fn return_error_for_duplicate_action() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:action bar :parameters ())
+           (:action bar :parameters ()))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "action, bar, is already defined");
+            return;
+        }
+    }
+    panic!("Duplicate action error not detected");
+}

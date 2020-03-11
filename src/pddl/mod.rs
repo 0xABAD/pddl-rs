@@ -19,6 +19,7 @@ pub use self::{
 };
 
 use rayon::prelude::*;
+use std::collections::HashSet;
 
 pub type Errors = Vec<Error>;
 
@@ -33,7 +34,7 @@ pub struct Domain {
     predicates: Vec<Predicate>, // Parsed (:predicates) ordered by PredId.
     functions: Vec<Function>,   // Parsed (:functions) ordered by FuncId.
     constants: Vec<Constant>,   // Parsed (:constants) ordered by ConstId.
-                                // actions: Vec<Action>,       // Parsed (:action ...) definitions.
+    actions: Vec<Action>,       // Parsed (:action ...) definitions.
 }
 
 impl Default for Domain {
@@ -45,7 +46,7 @@ impl Default for Domain {
             predicates: vec![],
             functions: vec![],
             constants: vec![],
-            // actions: vec![],
+            actions: vec![],
         }
     }
 }
@@ -91,38 +92,30 @@ impl Domain {
         dom.types = result.types;
 
         let mut parsers: Vec<Parser> = vec![];
+        let dom_types = &dom.types;
+        let mut new_parser = |what, pos| {
+            let mut p = Parser::new(src, &tokens);
+
+            p.tokpos = pos;
+            p.reqs = dom.reqs;
+            p.what = what;
+            p.types = Some(dom_types);
+
+            parsers.push(p);
+        };
 
         if result.pred_pos != 0 {
-            let mut p = Parser::new(src, &tokens);
-
-            p.tokpos = result.pred_pos;
-            p.reqs = result.reqs;
-            p.what = ParsingWhat::Predicates;
-            p.types = Some(&dom.types);
-
-            parsers.push(p);
+            new_parser(ParsingWhat::Predicates, result.pred_pos);
         }
-
         if result.func_pos != 0 {
-            let mut p = Parser::new(src, &tokens);
-
-            p.tokpos = result.func_pos;
-            p.reqs = result.reqs;
-            p.what = ParsingWhat::Functions;
-            p.types = Some(&dom.types);
-
-            parsers.push(p);
+            new_parser(ParsingWhat::Functions, result.func_pos);
+        }
+        if result.const_pos != 0 {
+            new_parser(ParsingWhat::Constants, result.const_pos);
         }
 
-        if result.const_pos != 0 {
-            let mut p = Parser::new(src, &tokens);
-
-            p.tokpos = result.const_pos;
-            p.reqs = result.reqs;
-            p.what = ParsingWhat::Constants;
-            p.types = Some(&dom.types);
-
-            parsers.push(p);
+        for pos in result.action_pos {
+            new_parser(ParsingWhat::Action, pos);
         }
 
         let results: Vec<Result<Parse, Error>> = parsers
@@ -131,12 +124,14 @@ impl Domain {
                 ParsingWhat::Predicates => p.predicates(),
                 ParsingWhat::Functions => p.functions(),
                 ParsingWhat::Constants => p.constants(),
-                // ParsingWhat::Action => dp.action(types),
+                ParsingWhat::Action => p.action(),
                 _ => panic!("Parsing incorrect contents: {:?}", p.what),
             })
             .collect();
 
         let mut errors: Vec<Error> = vec![];
+        let mut act_id: ActionId = 0;
+        let mut act_names: HashSet<String> = HashSet::new();
 
         for result in results {
             let parse = match result {
@@ -153,23 +148,23 @@ impl Domain {
                 ParsingWhat::Predicates => dom.predicates = parse.predicates,
                 ParsingWhat::Functions => dom.functions = parse.functions,
                 ParsingWhat::Constants => dom.constants = parse.constants,
-                // ParsingWhat::Action => {
-                //     let mut act = pr.action.expect("did not receive a parsed :action");
+                ParsingWhat::Action => {
+                    let mut act = parse.action.expect("did not receive a parsed :action");
 
-                //     if act_names.contains(&act.name) {
-                //         let s = format!("action, {}, is already defined", &act.name);
-                //         errors.push(ParseError {
-                //             what: ParseErrorType::SemanticError(s),
-                //             line: act.line,
-                //             col: act.col,
-                //         });
-                //     } else {
-                //         act.id = act_id;
-                //         act_id += 1;
-                //         act_names.insert(act.name.clone());
-                //         dom.actions.push(act);
-                //     }
-                // }
+                    if act_names.contains(&act.name) {
+                        let s = format!("action, {}, is already defined", &act.name);
+                        errors.push(Error {
+                            what: ErrorType::SemanticError(s),
+                            line: act.line,
+                            col: act.col,
+                        });
+                    } else {
+                        act.id = act_id;
+                        act_id += 1;
+                        act_names.insert(act.name.clone());
+                        dom.actions.push(act);
+                    }
+                }
                 _ => continue,
             }
         }
