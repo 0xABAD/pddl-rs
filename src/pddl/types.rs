@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 pub type TypeId = usize;
 
@@ -9,17 +9,23 @@ type TypeMap = Vec<TypeSet>;
 /// within a PDDL domain.
 #[derive(Debug)]
 pub struct Types {
-    types: HashMap<String, TypeId>, // Lowercased type names to their assigned TypeId.
-    children: TypeMap, // Immediate child TypeIds.  Vector is indexed by the parent TypeId.
-    parents: TypeMap,  // Immediate parent TypeIds.  Vector is indexed by the child TypeId.
-    type_id: TypeId,   // A TypeId counter.
+    // Type names where the index into the vector is the TypeId for
+    // the type.  Previously a HashMap was used but with a small number
+    // of types (i.e. 12), which is typically the case, the vector lookup
+    // out performed the HashMap by 10 to 20% in the worst case where
+    // the item being searched was the last string in the vector.
+    types: Vec<String>,
+
+    type_id: TypeId,    // A TypeId counter.
+    children: TypeMap,  // Immediate child TypeIds.  Vector is indexed by the parent TypeId.
+    parents: TypeMap,   // Immediate parent TypeIds.  Vector is indexed by the child TypeId.
 }
 
 impl Default for Types {
     fn default() -> Self {
         Types {
-            types: HashMap::new(),
             type_id: 0,
+            types: vec![],
             parents: vec![],
             children: vec![],
         }
@@ -30,19 +36,23 @@ impl Types {
     /// `get` returns the `TypeId` of the lowercase form of `name`
     /// if it exists.
     pub fn get(&self, name: &str) -> Option<TypeId> {
-        let n = name.to_ascii_lowercase();
-        self.types.get(&n).map(|&id| id)
+        for i in 0..self.types.len() {
+            let s = &self.types[i];
+            if name.eq_ignore_ascii_case(s) {
+                return Some(i);
+            }
+        }
+        None
     }
 
     /// `insert` inserts `s` and assigns it a `TypeId` if it hasn't already
     /// been seen.
     pub fn insert(&mut self, s: &str) -> TypeId {
-        let id = s.to_ascii_lowercase();
-        if self.types.contains_key(&id) {
-            *self.types.get(&id).unwrap()
+        if let Some(id) = self.get(s) {
+            id
         } else {
             let tid = self.type_id;
-            self.types.insert(id, tid);
+            self.types.push(s.to_string());
             self.type_id += 1;
             self.parents.push(TypeSet::new());
             self.children.push(TypeSet::new());

@@ -1,6 +1,5 @@
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use pddl_rs::pddl::types::Types;
-use std::fs;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("types get", move |b| {
@@ -8,20 +7,22 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             || {
                 let mut t = Types::default();
 
-                let foo = t.insert("foo");
-                let bar = t.insert("bar");
-                let baz = t.insert("baz");
-                let fub = t.insert("fub");
-                let quux = t.insert("quux");
-
-                t.relate(foo, bar);
-                t.relate(foo, baz);
-                t.relate(baz, fub);
-                t.relate(quux, foo);
+                t.insert("foo");
+                t.insert("bar");
+                t.insert("baz");
+                t.insert("fub");
+                t.insert("quux");
+                t.insert("who");
+                t.insert("are");
+                t.insert("you");
+                t.insert("said");
+                t.insert("the");
+                t.insert("catepillar");
+                t.insert("object");
 
                 t
             },
-            |t| t.get("Baz"),
+            |t| t.get("object"),
             BatchSize::SmallInput,
         )
     });
