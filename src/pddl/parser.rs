@@ -199,42 +199,6 @@ impl<'a> Parser<'a> {
         Ok(tok)
     }
 
-    /// `next_is_and` returns true if the next token in the stream has
-    /// a `TokenType` of `what` and fulfills the predicate of `and`.  If
-    /// false then the token is not consumed.
-    fn next_is_and<F>(&mut self, what: TokenType, and: F) -> bool
-    where
-        F: FnOnce(&Token) -> bool,
-    {
-        if self.tokpos >= self.tokens.len() {
-            return false;
-        }
-        let t = &self.tokens[self.tokpos];
-        if t.what == what && and(t) {
-            self.tokpos += 1;
-            self.col = t.col;
-            self.line = t.line;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// `next_is` is like calling `next_is_and` where `and` is a tautology.
-    fn next_is(&mut self, what: TokenType) -> bool {
-        self.next_is_and(what, |_| true)
-    }
-
-    // /// `ident_is` returns true if the next token in the stream is an identifier
-    // /// and whose string contents are case insensitive match to `what`.  If false
-    // /// then the token is not consumed.
-    // fn ident_is(&mut self, what: &str) -> bool {
-    //     let src = self.src;
-    //     self.next_is_and(TokenType::Ident, |t| {
-    //         t.to_str(src).eq_ignore_ascii_case(what)
-    //     })
-    // }
-
     fn expect(&mut self, ttypes: &[TokenType], idents: &[&str]) -> Result<&Token, Error> {
         let token = self.next();
 
@@ -874,19 +838,6 @@ mod test {
         assert!(parser.ident("define").is_ok());
         assert!(parser.consume(TokenType::LParen).is_ok());
         assert!(parser.ident("domain").is_ok());
-    }
-
-    #[test]
-    fn next_is() {
-        const TEST: &'static str = ":REQUIREMENTS ( :action)";
-
-        let tokens = scanner::scan(TEST);
-        let mut parser = Parser::new(TEST, &tokens);
-
-        assert!(parser.next_is(TokenType::Requirements));
-        assert!(parser.next_is(TokenType::LParen));
-        assert!(parser.next_is(TokenType::Action));
-        assert!(parser.next_is(TokenType::RParen));
     }
 
     #[test]
