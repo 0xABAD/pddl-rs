@@ -4,7 +4,7 @@ use super::{
     reqs::{Reqs, Requirement},
     scanner::{Token, TokenType},
     types::{TypeId, Types},
-    FuncId, Function, Param, PredId, Predicate,
+    ConstId, Constant, FuncId, Function, Param, PredId, Predicate,
 };
 
 pub struct Parser<'a> {
@@ -23,7 +23,7 @@ pub enum ParsingWhat {
     Any,
     Predicates,
     Functions,
-    // Constants,
+    Constants,
     // Action,
 }
 
@@ -206,6 +206,19 @@ impl<'a> Parser<'a> {
         } else {
             Some(&self.tokens[self.tokpos])
         }
+    }
+
+    /// `upcoming` peeks at the next token and returns true if
+    /// it is equal to one of `ttypes`.
+    fn upcoming(&self, ttypes: &[TokenType]) -> bool {
+        if let Some(t) = self.peek() {
+            return ttypes
+                .iter()
+                .skip_while(|&&tt| t.what != tt)
+                .next()
+                .is_some();
+        }
+        false
     }
 
     /// `expect` returns the token that is either on of `ttypes` or is
@@ -543,14 +556,9 @@ impl<'a> Parser<'a> {
                 func_id += 1;
             }
 
-            if let Some(t) = self.peek() {
-                if t.what == TokenType::LParen || t.what == TokenType::RParen {
-                    continue;
-                }
+            if self.upcoming(&[TokenType::LParen, TokenType::RParen]) {
+                continue;
             }
-
-            // Even though we peeked for '(' or ')' we still expect it for proper
-            // error reporting.
             let tok = self.expect(
                 &[TokenType::Minus, TokenType::LParen, TokenType::RParen],
                 &[],
@@ -654,6 +662,56 @@ impl<'a> Parser<'a> {
             }
         }
     }
+
+    /// `constants` parses the `:constants` portion of the PDDL domain.
+    pub fn constants(&mut self) -> Result<Parse, Error> {
+        let mut const_id = 0;
+        let mut consts: Vec<Constant> = vec![];
+        let mut const_ids: Vec<ConstId> = vec![];
+        let mut const_map: HashMap<String, ConstId> = HashMap::new();
+
+        loop {
+            let tok = self.expect(&[TokenType::Ident, TokenType::RParen], &[])?;
+            if tok.what == TokenType::RParen {
+                let mut result = Parse::default();
+                result.what = ParsingWhat::Constants;
+                result.constants = consts;
+                return Ok(result);
+            }
+
+            let ident = tok.to_str(self.src).to_ascii_lowercase();
+            if let Some(&id) = const_map.get(&ident) {
+                const_ids.push(id);
+            } else {
+                consts.push(Constant {
+                    id: const_id,
+                    name: ident.clone(),
+                    types: vec![],
+                });
+                const_map.insert(ident, const_id);
+                const_ids.push(const_id);
+                const_id += 1;
+            }
+
+            if self.upcoming(&[TokenType::Ident, TokenType::RParen]) {
+                continue;
+            }
+            let tok = self.expect(&[TokenType::Ident, TokenType::Minus, TokenType::RParen], &[])?;
+
+            if tok.what == TokenType::Minus {
+                if !self.reqs.has(Requirement::Typing) {
+                    return Err(self.missing(Requirement::Typing, ":types"));
+                }
+                let type_ids = self.collect_types()?;
+                for &id in &const_ids {
+                    consts[id].types.extend_from_slice(&type_ids);
+                    consts[id].types.sort();
+                    consts[id].types.dedup();
+                }
+                const_ids.clear();
+            }
+        }
+    }
 }
 
 impl<'a> Iterator for Parser<'a> {
@@ -736,7 +794,7 @@ pub struct Parse<'a> {
     pub derived_pos: Vec<usize>, // Token positions where :derived functions begin in the PDDL source.
     pub predicates: Vec<Predicate>, // Parsed predicate declarations.
     pub functions: Vec<Function>, // Parsed function declarations.
-                                 // constants: Vec<Constant>,   // Parsed constant declarations.
+    pub constants: Vec<Constant>, // Parsed constant declarations.
                                  // action: Option<Action>,     // Parsed action definition.
 }
 
@@ -756,6 +814,7 @@ impl<'a> Default for Parse<'a> {
             derived_pos: vec![],
             predicates: vec![],
             functions: vec![],
+            constants: vec![],
         }
     }
 }
