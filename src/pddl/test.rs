@@ -1,5 +1,17 @@
 use super::*;
 
+macro_rules! param {
+    ($($arg:tt)*) => {
+        {
+            Param {
+                types: vec![$($arg)*],
+                start: 0,
+                end: 0,
+            }
+        }
+    }
+}
+
 #[test]
 fn check_if_domain() {
     assert!(Domain::is_domain("(define (domain foo))"));
@@ -421,4 +433,185 @@ fn circular_inheritance_detected_3() {
         }
     }
     panic!("circular inheritance was not detected");
+}
+
+#[test]
+fn can_parse_predicates_without_typing() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:predicates (bar) (baz) (quux)))",
+    )?;
+
+    let bar = &d.predicates[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![]);
+
+    let baz = &d.predicates[1];
+    assert_eq!(baz.id, 1);
+    assert_eq!(baz.name, "baz");
+    assert_eq!(baz.params, vec![]);
+
+    let quux = &d.predicates[2];
+    assert_eq!(quux.id, 2);
+    assert_eq!(quux.name, "quux");
+    assert_eq!(quux.params, vec![]);
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_predicates() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - object)
+                        (baz ?a ?b - Sphere ?c -block)
+                        (quux?a - square?b?c - (either Block square))))",
+    )?;
+
+    let bar = &d.predicates[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![param![0]]);
+
+    let baz = &d.predicates[1];
+    assert_eq!(baz.id, 1);
+    assert_eq!(baz.name, "baz");
+    assert_eq!(baz.params, vec![param![3], param![3], param![1]]);
+
+    let quux = &d.predicates[2];
+    assert_eq!(quux.id, 2);
+    assert_eq!(quux.name, "quux");
+    assert_eq!(quux.params, vec![param![2], param![1, 2], param![1, 2]]);
+
+    Ok(())
+}
+
+#[test]
+fn predicates_collates_either_types() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - object ?b - sphere)
+                        (bar ?a - square ?b - square)
+                        (fub ?a ?b - object ?c - sphere)
+                        (bar ?a - block ?b - sphere)
+                        (fub ?a - sphere ?b - block ?c - square)))",
+    )?;
+
+    let bar = &d.predicates[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![param![0, 1, 2], param![2, 3]]);
+
+    let fub = &d.predicates[1];
+    assert_eq!(fub.id, 1);
+    assert_eq!(fub.name, "fub");
+    assert_eq!(fub.params, vec![param![0, 3], param![0, 1], param![2, 3]]);
+
+    Ok(())
+}
+
+#[test]
+fn parse_predicates_allow_mismatching_arity() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - object)
+                        (bar ?a - block ?b - sphere)))",
+    )?;
+
+    let bar = &d.predicates[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![param![0]]);
+
+    let bar = &d.predicates[1];
+    assert_eq!(bar.id, 1);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![param![1], param![3]]);
+
+    Ok(())
+}
+
+#[test]
+fn parse_predicates_fails_with_duplicated_parameter() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - Sphere ?A)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "?A is a duplicated parameter");
+            return;
+        }
+    }
+    panic!("Duplicated parameter error not detected");
+}
+
+#[test]
+fn parse_predicates_fails_with_type_not_defined() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - object)
+                        (baz ?a ?b - sphere ?c - bloc)
+                        (quux ?a - square ?b ?c - (either block square))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::TypeNotDefined(t) = &e[0].what {
+            assert_eq!(t, "bloc");
+            return;
+        }
+    }
+    panic!("Type defined error not returned");
+}
+
+#[test]
+fn parse_predicates_fails_with_type_not_defined_2() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (bar ?a - object)
+                        (baz ?a ?b - sphere ?c - block)
+                        (quux ?a - square ?b ?c - (either block shape))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::TypeNotDefined(t) = &e[0].what {
+            assert_eq!(t, "shape");
+            return;
+        }
+    }
+    panic!("Type defined error not returned");
+}
+
+#[test]
+fn parse_predicates_fails_when_typing_not_declared() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:predicates (bar ?a - object)
+                        (baz ?a ?b - sphere ?c - block)
+                        (quux ?a - square ?b ?c - (either block square))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = &e[0].what {
+            assert_eq!(*req, Requirement::Typing);
+            return;
+        }
+    }
+    panic!("Missing :types requirement error not returned");
 }

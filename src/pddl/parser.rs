@@ -1,28 +1,30 @@
-use std::{error, fmt, iter::Iterator};
+use std::{collections::HashMap, error, fmt, iter::Iterator};
 
 use super::{
     reqs::{Reqs, Requirement},
     scanner::{Token, TokenType},
     types::{TypeId, Types},
+    Param, PredId, Predicate,
 };
 
 pub struct Parser<'a> {
-    src: &'a str,        // Original source that was scanned.
-    tokens: &'a [Token], // Scanned tokens to be parsed.
-    tokpos: usize,       // Current index into `tokens`.
-    col: usize,          // Current column of parse.
-    line: usize,         // Current line of parse.
-    reqs: Reqs,          // Known requirements.
-                         // types: Option<&'a Types>, // Collected type declarations.
+    pub src: &'a str,             // Original source that was scanned.
+    pub tokens: &'a [Token],      // Scanned tokens to be parsed.
+    pub tokpos: usize,            // Current index into `tokens`.
+    pub col: usize,               // Current column of parse.
+    pub line: usize,              // Current line of parse.
+    pub what: ParsingWhat,        // What is specifically being parsed.
+    pub reqs: Reqs,               // Known requirements.
+    pub types: Option<&'a Types>, // Collected type declarations.
 }
 
-macro_rules! try_next {
-    ($parser:tt, $($arg:tt)*) => {
-        {
-            $parser.next()
-                .ok_or_else(|| Error::expect($parser.line, $parser.col, "end of input", &[$($arg)*]))
-        }
-    }
+#[derive(Debug)]
+pub enum ParsingWhat {
+    Any,
+    Predicates,
+    // Functions,
+    // Constants,
+    // Action,
 }
 
 impl<'a> Parser<'a> {
@@ -34,6 +36,8 @@ impl<'a> Parser<'a> {
             col: 1,
             line: 1,
             reqs: Reqs::default(),
+            types: None,
+            what: ParsingWhat::Any,
         }
     }
 
@@ -170,7 +174,10 @@ impl<'a> Parser<'a> {
     /// is equal to `what`. If that is not the case then a `ParseError` is
     /// returned that expects `what`.
     fn consume(&mut self, what: TokenType) -> Result<&Token, Error> {
-        let tok = try_next!(self, what.as_str())?;
+        let tok = self
+            .next()
+            .ok_or_else(|| Error::expect(self.line, self.col, "end of input", &[what.as_str()]))?;
+
         if tok.what != what {
             let have = tok.to_str(self.src);
             return Err(Error::expect(self.line, self.col, have, &[what.as_str()]));
@@ -181,7 +188,10 @@ impl<'a> Parser<'a> {
     /// `ident` consumes the next input if the next token is an identifier
     /// that matches `what`.
     fn ident(&mut self, what: &str) -> Result<&Token, Error> {
-        let tok = try_next!(self, what)?;
+        let tok = self
+            .next()
+            .ok_or_else(|| Error::expect(self.line, self.col, "end of input", &[what]))?;
+
         let have = tok.to_str(self.src);
         if tok.what != TokenType::Ident || !have.eq_ignore_ascii_case(what) {
             return Err(Error::expect(self.line, self.col, have, &[what]));
@@ -430,6 +440,143 @@ impl<'a> Parser<'a> {
         }
         Ok(())
     }
+
+    /// `collect_types` is a more specific version for `type_declarations` that
+    /// merely extracts and returns the collected `TypeId`s.
+    fn collect_types(&mut self) -> Result<Vec<TypeId>, Error> {
+        let mut type_ids: Vec<TypeId> = vec![];
+        let src = self.src;
+        let types = self.types.unwrap();
+
+        self.type_declarations(|t| {
+            let name = t.to_str(src);
+            if let Some(tid) = types.get(name) {
+                type_ids.push(tid);
+                return Ok(());
+            }
+            Err(Error::type_not_defined(t.line, t.col, name))
+        })?;
+
+        Ok(type_ids)
+    }
+
+    /// `predicates` parses the `:predicates` section of a PDDL domain.
+    pub fn predicates(&mut self) -> Result<Parse, Error> {
+        let mut result = Parse::default();
+        let mut pred_id = 0;
+        let mut pred_map: HashMap<String, PredId> = HashMap::new();
+
+        result.what = ParsingWhat::Predicates;
+        self.consume(TokenType::LParen)?;
+
+        let sig = self.signature()?;
+        let key = sig.lookup_key();
+
+        result.predicates.push(Predicate {
+            id: pred_id,
+            name: sig.name,
+            params: sig.params,
+        });
+        pred_map.insert(key, pred_id);
+        pred_id += 1;
+
+        loop {
+            let tok = self.expect(&[TokenType::LParen, TokenType::RParen], &[])?;
+            if tok.what == TokenType::RParen {
+                break;
+            }
+
+            let sig = self.signature()?;
+            let key = sig.lookup_key();
+            let mut new_pred = true;
+
+            if let Some(&id) = pred_map.get(&key) {
+                if sig.params.len() == result.predicates[id].params.len() {
+                    new_pred = false;
+                    for i in 0..sig.params.len() {
+                        let p = &sig.params[i];
+                        let param = &mut result.predicates[id].params[i];
+                        param.types.extend_from_slice(&p.types);
+                        param.types.sort();
+                        param.types.dedup();
+                    }
+                }
+            }
+
+            if new_pred {
+                result.predicates.push(Predicate {
+                    id: pred_id,
+                    name: sig.name,
+                    params: sig.params,
+                });
+                pred_map.insert(key, pred_id);
+                pred_id += 1;
+            }
+        }
+        Ok(result)
+    }
+
+    /// `signature` parses the predicate or function signature
+    /// found in either the :predicates or :functions section of the
+    /// PDDL domain.  It is assumed that the first left paren has been
+    /// consumed.
+    fn signature(&mut self) -> Result<Signature, Error> {
+        let ident = self.consume(TokenType::Ident)?;
+        let mut sig = Signature {
+            name: ident.to_str(self.src).to_ascii_lowercase(),
+            params: vec![],
+        };
+        // This marks the beginning of variable names that have
+        // been parsed.  After the type(s) have been parsed it
+        // should be set to the position of where the next variable
+        // in the parameter list begins.  Every parameter from this
+        // position to the end of sig.params will have whatever type
+        // IDs appended to their ID list.
+        let mut var_begin = 0;
+        let mut var_names: Vec<&str> = vec![];
+
+        // Get the first variable if there is one.
+        let tok = self.expect(&[TokenType::Variable, TokenType::RParen], &[])?;
+        if tok.what == TokenType::RParen {
+            return Ok(sig);
+        }
+        var_names.push(tok.to_str(self.src));
+        sig.params.push(Param::default());
+
+        // Get the rest of the variables and their types if they have some.
+        loop {
+            let tok = self.expect(
+                &[TokenType::Variable, TokenType::Minus, TokenType::RParen],
+                &[],
+            )?;
+
+            if tok.what == TokenType::RParen {
+                return Ok(sig);
+            } else if tok.what == TokenType::Variable {
+                let name = tok.to_str(self.src);
+                for n in &var_names {
+                    if n.eq_ignore_ascii_case(name) {
+                        let s = format!("{} is a duplicated parameter", name);
+                        return Err(self.semantic(&s));
+                    }
+                }
+                var_names.push(name);
+                sig.params.push(Param::default());
+            } else if tok.what == TokenType::Minus {
+                if !self.reqs.has(Requirement::Typing) {
+                    return Err(self.missing(Requirement::Typing, ":types"));
+                }
+                let type_ids = self.collect_types()?;
+                for i in var_begin..sig.params.len() {
+                    let p = &mut sig.params[i];
+                    p.types.extend_from_slice(&type_ids);
+                    p.types.sort();
+                    p.types.dedup();
+                }
+                var_begin = sig.params.len();
+            }
+        }
+    }
 }
 
 impl<'a> Iterator for Parser<'a> {
@@ -444,6 +591,23 @@ impl<'a> Iterator for Parser<'a> {
         self.col = t.col;
         self.line = t.line;
         Some(t)
+    }
+}
+
+/// `Signature` encapsulates the parsed result of a predicate or
+/// function declaration (i.e. '(foo ?a ?b - object ?c - (either bar baz))' ).
+struct Signature {
+    name: String,       // Name of the predicate or function (e.g. 'foo').
+    params: Vec<Param>, // Parameters of the declaration (e.g. '?a', '?b', etc.).
+}
+
+impl Signature {
+    /// `lookup_key` returns a key that can be used to see if the Signature
+    /// has already been declared.  The key will be a combination of the formula's
+    /// name along with its parameter arity and is composed of characters that is
+    /// impossible to be a valid identifier.
+    fn lookup_key(&self) -> String {
+        format!("{}-**-{}-**-", self.name, self.params.len())
     }
 }
 
@@ -482,18 +646,18 @@ impl TokenType {
 /// different methods of a `Parser`.
 #[derive(Debug)]
 pub struct Parse<'a> {
-    // what: ParsingWhat,          // What was parsed by this result.
+    pub what: ParsingWhat,       // What was parsed by this result.
     pub name: &'a str,           // Name of a domain.
     pub reqs: Reqs,              // Requirements of the domain represented as bit vector.
     pub types: Types,            // Types extracted from the domain.
+    pub constraints_pos: usize, // Token position within the PDDL source where constraints are located.
     pub const_pos: usize, // Token position within the PDDL source where constants are located.
     pub pred_pos: usize,  // Token position within the PDDL source where predicates are located.
     pub func_pos: usize,  // Token position within the PDDL source where functions are located.
-    pub constraints_pos: usize, // Token position within the PDDL source where constraints are located.
     pub action_pos: Vec<usize>, // Token positions where :actions begin in the PDDL source.
     pub daction_pos: Vec<usize>, // Token positions where :durative-actions begin in the PDDL source.
     pub derived_pos: Vec<usize>, // Token positions where :derived functions begin in the PDDL source.
-                                 // predicates: Vec<Predicate>, // Parsed predicate declarations.
+    pub predicates: Vec<Predicate>, // Parsed predicate declarations.
                                  // functions: Vec<Function>,   // Parsed function declarations.
                                  // constants: Vec<Constant>,   // Parsed constant declarations.
                                  // action: Option<Action>,     // Parsed action definition.
@@ -502,6 +666,7 @@ pub struct Parse<'a> {
 impl<'a> Default for Parse<'a> {
     fn default() -> Self {
         Parse {
+            what: ParsingWhat::Any,
             name: "",
             reqs: Reqs::default(),
             types: Types::default(),
@@ -512,6 +677,7 @@ impl<'a> Default for Parse<'a> {
             action_pos: vec![],
             daction_pos: vec![],
             derived_pos: vec![],
+            predicates: vec![],
         }
     }
 }
