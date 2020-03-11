@@ -1,4 +1,5 @@
 pub mod scanner;
+pub mod types;
 
 mod parser;
 mod reqs;
