@@ -615,3 +615,255 @@ fn parse_predicates_fails_when_typing_not_declared() {
     }
     panic!("Missing :types requirement error not returned");
 }
+
+#[test]
+fn can_parse_functions() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:functions (bar ?a - object)
+                       (bar2 ?a - object) - number
+                       (baz ?a ?b - sphere ?c -block) - (either sphere block)
+                       (quux ?a - square ?b ?c - (either block square)) - object
+                       (bar3)
+                       (bar4)))",
+    )?;
+
+    let bar = &d.functions[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![param![0]]);
+    assert_eq!(bar.return_types, vec![]);
+    assert!(bar.returns_number);
+
+    let bar2 = &d.functions[1];
+    assert_eq!(bar2.id, 1);
+    assert_eq!(bar2.name, "bar2");
+    assert_eq!(bar2.params, vec![param![0]]);
+    assert_eq!(bar2.return_types, vec![]);
+    assert!(bar2.returns_number);
+
+    let baz = &d.functions[2];
+    assert_eq!(baz.id, 2);
+    assert_eq!(baz.name, "baz");
+    assert_eq!(baz.params, vec![param![3], param![3], param![1]]);
+    assert_eq!(baz.return_types, vec![1, 3]);
+    assert!(!baz.returns_number);
+
+    let quux = &d.functions[3];
+    assert_eq!(quux.id, 3);
+    assert_eq!(quux.name, "quux");
+    assert_eq!(quux.params, vec![param![2], param![1, 2], param![1, 2]]);
+    assert_eq!(quux.return_types, vec![0]);
+    assert!(!quux.returns_number);
+
+    let bar3 = &d.functions[4];
+    assert_eq!(bar3.id, 4);
+    assert_eq!(bar3.name, "bar3");
+    assert_eq!(bar3.params, vec![]);
+    assert_eq!(bar3.return_types, vec![]);
+    assert!(bar3.returns_number);
+
+    let bar4 = &d.functions[5];
+    assert_eq!(bar4.id, 5);
+    assert_eq!(bar4.name, "bar4");
+    assert_eq!(bar4.params, vec![]);
+    assert_eq!(bar4.return_types, vec![]);
+    assert!(bar4.returns_number);
+
+    Ok(())
+}
+
+#[test]
+fn parse_functions_allow_mismatching_arity() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:functions (bar ?a - object ?b - block)
+                       (bar ?a - block ?b - square ?c - sphere)))",
+    )?;
+
+    let bar = &d.functions[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![param![0], param![1]]);
+
+    let bar = &d.functions[1];
+    assert_eq!(bar.id, 1);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![param![1], param![2], param![3]]);
+
+    Ok(())
+}
+
+#[test]
+fn functions_collates_either_types() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:functions (bar ?a - object)
+                       (fub ?a - object) - number
+                       (baz ?a ?b - sphere ?c -block) - (either sphere block)
+                       (quux ?a - square ?b ?c - (either block square)) - object
+                       (quux ?a - square ?b ?c - (either block square)) - block
+                       (bar ?a - (either sphere square))
+                       (baz ?a ?b - sphere ?c - block)))",
+    )?;
+
+    let bar = &d.functions[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params, vec![param![0, 2, 3]]);
+    assert_eq!(bar.return_types, vec![]);
+    assert!(bar.returns_number);
+
+    let fub = &d.functions[1];
+    assert_eq!(fub.id, 1);
+    assert_eq!(fub.name, "fub");
+    assert_eq!(fub.params, vec![param![0]]);
+    assert_eq!(fub.return_types, vec![]);
+    assert!(fub.returns_number);
+
+    let baz = &d.functions[2];
+    assert_eq!(baz.id, 2);
+    assert_eq!(baz.name, "baz");
+    assert_eq!(baz.params, vec![param![3], param![3], param![1]]);
+    assert_eq!(baz.return_types, vec![1, 3]);
+    assert!(baz.returns_number);
+
+    let quux = &d.functions[3];
+    assert_eq!(quux.id, 3);
+    assert_eq!(quux.name, "quux");
+    assert_eq!(quux.params, vec![param![2], param![1, 2], param![1, 2]]);
+    assert_eq!(quux.return_types, vec![0, 1]);
+    assert!(!quux.returns_number);
+
+    Ok(())
+}
+
+#[test]
+fn parse_functions_fails_with_duplicated_parameter() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:functions (bar ?a - object ?A)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "?A is a duplicated parameter");
+            return;
+        }
+    }
+    panic!("Duplicated parameter error not detected");
+}
+
+#[test]
+fn parse_functions_fails_when_typing_not_declared() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:functions (baz ?a ?b - object)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::Typing);
+            return;
+        }
+    }
+    panic!("Missing :types requirement error not returned");
+}
+
+#[test]
+fn parse_functions_fails_when_typing_not_declared2() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips)
+           (:functions (baz ?a ?b) - (either sphere block)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::Typing);
+            return;
+        }
+    }
+    panic!("Missing :types requirement error not returned");
+}
+
+#[test]
+fn parse_functions_fails_when_object_fluents_not_declared() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:functions (baz ?a ?b) - (either sphere block)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::ObjectFluents);
+            return;
+        }
+    }
+    panic!("Missing :object-fluents requirement error not returned");
+}
+
+#[test]
+fn parse_functions_fails_when_numeric_fluents_not_declared() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:functions (baz ?a ?b)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::NumericFluents);
+            return;
+        }
+    }
+    panic!("Missing :numeric-fluents requirement error not returned");
+}
+
+#[test]
+fn parse_functions_fails_when_numeric_fluents_not_declared_2() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:functions (baz ?a ?b) - number))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::NumericFluents);
+            return;
+        }
+    }
+    panic!("Missing :numeric-fluents requirement error not returned");
+}
+
+#[test]
+fn parse_functions_fails_when_type_not_defined() {
+    let d = Domain::parse(
+        "(define (domain foo)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:functions (baz ?a ?b) - ball))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::TypeNotDefined(t) = &e[0].what {
+            assert_eq!(*t, "ball");
+            return;
+        }
+    }
+    panic!("Type defined error not returned");
+}

@@ -4,7 +4,7 @@ use super::{
     reqs::{Reqs, Requirement},
     scanner::{Token, TokenType},
     types::{TypeId, Types},
-    Param, PredId, Predicate,
+    FuncId, Function, Param, PredId, Predicate,
 };
 
 pub struct Parser<'a> {
@@ -22,7 +22,7 @@ pub struct Parser<'a> {
 pub enum ParsingWhat {
     Any,
     Predicates,
-    // Functions,
+    Functions,
     // Constants,
     // Action,
 }
@@ -199,6 +199,17 @@ impl<'a> Parser<'a> {
         Ok(tok)
     }
 
+    /// `peek` return the next token without consuming it from the stream.
+    fn peek(&self) -> Option<&Token> {
+        if self.tokpos >= self.tokens.len() {
+            None
+        } else {
+            Some(&self.tokens[self.tokpos])
+        }
+    }
+
+    /// `expect` returns the token that is either on of `ttypes` or is
+    /// an identifier whose case insensitive string form is one of `idents.
     fn expect(&mut self, ttypes: &[TokenType], idents: &[&str]) -> Result<&Token, Error> {
         let token = self.next();
 
@@ -455,15 +466,13 @@ impl<'a> Parser<'a> {
             let mut new_pred = true;
 
             if let Some(&id) = pred_map.get(&key) {
-                if sig.params.len() == result.predicates[id].params.len() {
-                    new_pred = false;
-                    for i in 0..sig.params.len() {
-                        let p = &sig.params[i];
-                        let param = &mut result.predicates[id].params[i];
-                        param.types.extend_from_slice(&p.types);
-                        param.types.sort();
-                        param.types.dedup();
-                    }
+                new_pred = false;
+                for i in 0..sig.params.len() {
+                    let p = &sig.params[i];
+                    let param = &mut result.predicates[id].params[i];
+                    param.types.extend_from_slice(&p.types);
+                    param.types.sort();
+                    param.types.dedup();
                 }
             }
 
@@ -478,6 +487,110 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(result)
+    }
+
+    /// `functions` parses the `:functions` section of a PDDL domain.
+    pub fn functions(&mut self) -> Result<Parse, Error> {
+        let mut func_id = 0;
+        let mut funcs = Vec::<Function>::new();
+        let mut func_ids = Vec::<FuncId>::new();
+        let mut func_map: HashMap<String, FuncId> = HashMap::new();
+        let mut parsed_types = false;
+        let mut result = Parse::default();
+
+        result.what = ParsingWhat::Functions;
+
+        loop {
+            let tok = self.expect(&[TokenType::LParen, TokenType::RParen], &[])?;
+
+            if tok.what == TokenType::RParen {
+                for &id in &func_ids {
+                    funcs[id].returns_number = true;
+                }
+                result.functions = funcs;
+                // If one or more functions are not followed by a '-' to specify
+                // the return type then it is implied that the return type is
+                // 'number'.
+                if !parsed_types && !self.reqs.has(Requirement::NumericFluents) {
+                    return Err(self.missing(Requirement::NumericFluents, "function(s)"));
+                }
+                return Ok(result);
+            }
+            parsed_types = false;
+
+            let sig = self.signature()?;
+            let key = sig.lookup_key();
+
+            if let Some(&id) = func_map.get(&key) {
+                func_ids.push(id);
+                for i in 0..sig.params.len() {
+                    let p = &sig.params[i];
+                    let param = &mut funcs[id].params[i];
+                    param.types.extend_from_slice(&p.types);
+                    param.types.sort();
+                    param.types.dedup();
+                }
+            } else {
+                funcs.push(Function {
+                    id: func_id,
+                    name: sig.name,
+                    params: sig.params,
+                    return_types: vec![],
+                    returns_number: false,
+                });
+                func_map.insert(key, func_id);
+                func_ids.push(func_id);
+                func_id += 1;
+            }
+
+            if let Some(t) = self.peek() {
+                if t.what == TokenType::LParen || t.what == TokenType::RParen {
+                    continue;
+                }
+            }
+
+            // Even though we peeked for '(' or ')' we still expect it for proper
+            // error reporting.
+            let tok = self.expect(
+                &[TokenType::Minus, TokenType::LParen, TokenType::RParen],
+                &[],
+            )?;
+
+            if tok.what == TokenType::Minus {
+                parsed_types = true;
+
+                if let Some(tok) = self.peek() {
+                    let s = tok.to_str(self.src);
+                    if tok.what == TokenType::Ident && s.eq_ignore_ascii_case("number") {
+                        self.next();
+
+                        if !self.reqs.has(Requirement::NumericFluents) {
+                            return Err(self.missing(Requirement::NumericFluents, "function(s)"));
+                        }
+                        for &id in &func_ids {
+                            funcs[id].returns_number = true;
+                        }
+                        func_ids.clear();
+                        continue;
+                    }
+                }
+
+                if !self.reqs.has(Requirement::Typing) {
+                    return Err(self.missing(Requirement::Typing, "function(s)"));
+                }
+                if !self.reqs.has(Requirement::ObjectFluents) {
+                    return Err(self.missing(Requirement::ObjectFluents, "function(s)"));
+                }
+
+                let type_ids = self.collect_types()?;
+                for &id in &func_ids {
+                    funcs[id].return_types.extend_from_slice(&type_ids);
+                    funcs[id].return_types.sort();
+                    funcs[id].return_types.dedup();
+                }
+                func_ids.clear();
+            }
+        }
     }
 
     /// `signature` parses the predicate or function signature
@@ -610,10 +723,10 @@ impl TokenType {
 /// different methods of a `Parser`.
 #[derive(Debug)]
 pub struct Parse<'a> {
-    pub what: ParsingWhat,       // What was parsed by this result.
-    pub name: &'a str,           // Name of a domain.
-    pub reqs: Reqs,              // Requirements of the domain represented as bit vector.
-    pub types: Types,            // Types extracted from the domain.
+    pub what: ParsingWhat,          // What was parsed by this result.
+    pub name: &'a str,              // Name of a domain.
+    pub reqs: Reqs,                 // Requirements of the domain represented as bit vector.
+    pub types: Types,               // Types extracted from the domain.
     pub constraints_pos: usize, // Token position within the PDDL source where constraints are located.
     pub const_pos: usize, // Token position within the PDDL source where constants are located.
     pub pred_pos: usize,  // Token position within the PDDL source where predicates are located.
@@ -622,7 +735,7 @@ pub struct Parse<'a> {
     pub daction_pos: Vec<usize>, // Token positions where :durative-actions begin in the PDDL source.
     pub derived_pos: Vec<usize>, // Token positions where :derived functions begin in the PDDL source.
     pub predicates: Vec<Predicate>, // Parsed predicate declarations.
-                                 // functions: Vec<Function>,   // Parsed function declarations.
+    pub functions: Vec<Function>, // Parsed function declarations.
                                  // constants: Vec<Constant>,   // Parsed constant declarations.
                                  // action: Option<Action>,     // Parsed action definition.
 }
@@ -642,6 +755,7 @@ impl<'a> Default for Parse<'a> {
             daction_pos: vec![],
             derived_pos: vec![],
             predicates: vec![],
+            functions: vec![],
         }
     }
 }

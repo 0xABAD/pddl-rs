@@ -28,12 +28,12 @@ pub struct Domain {
     /// The parsed domain name.
     pub name: String,
 
-    types: Types, // Parsed (:types).
-    reqs: Reqs,   // Parsed (:requirements).
+    types: Types,               // Parsed (:types).
+    reqs: Reqs,                 // Parsed (:requirements).
     predicates: Vec<Predicate>, // Parsed (:predicates) ordered by PredId.
-                  // functions: Vec<Function>,   // Parsed (:functions) ordered by FuncId.
-                  // constants: Vec<Constant>,   // Parsed (:constants) ordered by ConstId.
-                  // actions: Vec<Action>,       // Parsed (:action ...) definitions.
+    functions: Vec<Function>,   // Parsed (:functions) ordered by FuncId.
+                                // constants: Vec<Constant>,   // Parsed (:constants) ordered by ConstId.
+                                // actions: Vec<Action>,       // Parsed (:action ...) definitions.
 }
 
 impl Default for Domain {
@@ -43,7 +43,7 @@ impl Default for Domain {
             reqs: Reqs::default(),
             types: Types::default(),
             predicates: vec![],
-            // functions: vec![],
+            functions: vec![],
             // constants: vec![],
             // actions: vec![],
         }
@@ -103,11 +103,22 @@ impl Domain {
             parsers.push(p);
         }
 
+        if result.func_pos != 0 {
+            let mut p = Parser::new(src, &tokens);
+
+            p.tokpos = result.func_pos;
+            p.reqs = result.reqs;
+            p.what = ParsingWhat::Functions;
+            p.types = Some(&dom.types);
+
+            parsers.push(p);
+        }
+
         let results: Vec<Result<Parse, Error>> = parsers
             .par_iter_mut()
             .map(|p| match p.what {
                 ParsingWhat::Predicates => p.predicates(),
-                // ParsingWhat::Functions => dp.functions(types),
+                ParsingWhat::Functions => p.functions(),
                 // ParsingWhat::Constants => dp.constants(types),
                 // ParsingWhat::Action => dp.action(types),
                 _ => panic!("Parsing incorrect contents: {:?}", p.what),
@@ -129,7 +140,7 @@ impl Domain {
             }
             match parse.what {
                 ParsingWhat::Predicates => dom.predicates = parse.predicates,
-                // ParsingWhat::Functions => dom.functions = pr.functions,
+                ParsingWhat::Functions => dom.functions = parse.functions,
                 // ParsingWhat::Constants => dom.constants = pr.constants,
                 // ParsingWhat::Action => {
                 //     let mut act = pr.action.expect("did not receive a parsed :action");
