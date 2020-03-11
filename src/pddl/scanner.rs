@@ -315,7 +315,7 @@ impl<'a> Scanner<'a> {
     fn keyword(&mut self, start: usize) -> Token {
         let mut tok = self.special(start, TokenType::Strips);
         if tok.what == TokenType::Strips {
-            let kw = &self.src[tok.pos..tok.end];
+            let kw: &str = &self.src[tok.pos..tok.end].to_ascii_lowercase();
             if let Some(tt) = self.keywords.get(kw) {
                 tok.what = *tt
             } else {
