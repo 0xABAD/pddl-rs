@@ -1,5 +1,8 @@
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use pddl_rs::{ tokens::{TokenError, Tokenizer}, pddl::scanner};
+use pddl_rs::{
+    pddl::scanner,
+    tokens::{TokenError, Tokenizer},
+};
 use std::fs;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -22,9 +25,11 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     let s = src.clone();
     c.bench_function("scanner", |b| {
-        b.iter(|| {
-            scanner::scan(&s);
-        });
+        b.iter_batched(
+            || scanner::Scanner::new(&s),
+            |mut sc| while let Some(_) = sc.next() {},
+            BatchSize::SmallInput,
+        )
     });
 }
 
