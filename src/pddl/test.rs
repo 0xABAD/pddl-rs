@@ -218,33 +218,30 @@ fn parse_requirements_fails_with_invalid_requirement() {
         let pe = &e[0];
         match &pe.what {
             ErrorType::Expect { have: _, expect } => {
-                let v: Vec<&str> = vec![
-                    TokenType::RParen,
-                    TokenType::Strips,
-                    TokenType::Typing,
-                    TokenType::Equality,
-                    TokenType::NegativePreconditions,
-                    TokenType::DisjunctivePreconditions,
-                    TokenType::ExistentialPreconditions,
-                    TokenType::UniversalPreconditions,
-                    TokenType::QuantifiedPreconditions,
-                    TokenType::ConditionalEffects,
-                    TokenType::Fluents,
-                    TokenType::NumericFluents,
-                    TokenType::ObjectFluents,
-                    TokenType::Adl,
-                    TokenType::DurativeActions,
-                    TokenType::DurationInequalities,
-                    TokenType::ContinuousEffects,
-                    TokenType::DerivedPredicates,
-                    TokenType::TimedInitialLiterals,
-                    TokenType::Preferences,
-                    TokenType::Constraints,
-                    TokenType::ActionCosts,
-                ]
-                .iter()
-                .map(|tt| tt.as_str())
-                .collect();
+                let v = &[
+                    "(",
+                    ":strips",
+                    ":typing",
+                    ":equality",
+                    ":negative-preconditions",
+                    ":disjunctive-preconditions",
+                    ":existential-preconditions",
+                    ":universal-preconditions",
+                    ":quantified-preconditions",
+                    ":conditional-effects",
+                    ":fluents",
+                    ":numeric-fluents",
+                    ":object-fluents",
+                    ":adl",
+                    ":durative-actions",
+                    ":duration-inequalities",
+                    ":continuous-effects",
+                    ":derived-predicates",
+                    ":timed-initial-literals",
+                    ":preferences",
+                    ":constraints",
+                    ":action-costs",
+                ];
                 assert_eq!(*expect, v)
             }
             _ => panic!("Invalid ErrorType -- have {:?}, want Expect", pe.what),
@@ -262,33 +259,30 @@ fn parse_requirements_fails_with_invalid_token() {
         let pe = &e[0];
         match &pe.what {
             ErrorType::Expect { have: _, expect } => {
-                let v: Vec<&str> = vec![
-                    TokenType::RParen,
-                    TokenType::Strips,
-                    TokenType::Typing,
-                    TokenType::Equality,
-                    TokenType::NegativePreconditions,
-                    TokenType::DisjunctivePreconditions,
-                    TokenType::ExistentialPreconditions,
-                    TokenType::UniversalPreconditions,
-                    TokenType::QuantifiedPreconditions,
-                    TokenType::ConditionalEffects,
-                    TokenType::Fluents,
-                    TokenType::NumericFluents,
-                    TokenType::ObjectFluents,
-                    TokenType::Adl,
-                    TokenType::DurativeActions,
-                    TokenType::DurationInequalities,
-                    TokenType::ContinuousEffects,
-                    TokenType::DerivedPredicates,
-                    TokenType::TimedInitialLiterals,
-                    TokenType::Preferences,
-                    TokenType::Constraints,
-                    TokenType::ActionCosts,
-                ]
-                .iter()
-                .map(|tt| tt.as_str())
-                .collect();
+                let v = &[
+                    "(",
+                    ":strips",
+                    ":typing",
+                    ":equality",
+                    ":negative-preconditions",
+                    ":disjunctive-preconditions",
+                    ":existential-preconditions",
+                    ":universal-preconditions",
+                    ":quantified-preconditions",
+                    ":conditional-effects",
+                    ":fluents",
+                    ":numeric-fluents",
+                    ":object-fluents",
+                    ":adl",
+                    ":durative-actions",
+                    ":duration-inequalities",
+                    ":continuous-effects",
+                    ":derived-predicates",
+                    ":timed-initial-literals",
+                    ":preferences",
+                    ":constraints",
+                    ":action-costs",
+                ];
                 assert_eq!(*expect, v)
             }
             _ => panic!("Invalid ErrorType -- have {:?}, want Expect", pe.what),

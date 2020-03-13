@@ -1,8 +1,12 @@
-use std::{collections::HashMap, iter::Iterator, str::CharIndices};
+use std::{iter::Iterator, str::CharIndices};
 
 /// `scan` builds a `Scanner` and scans `src` for every possible token.
 pub fn scan(src: &str) -> Vec<Token> {
-    Scanner::new(src).collect()
+    let mut v = std::vec::Vec::<Token>::with_capacity(1 << 13); // 8K tokens
+    for t in Scanner::new(src) {
+        v.push(t);
+    }
+    v
 }
 
 /// `Scanner` that recognizes PDDL tokens.
@@ -24,81 +28,18 @@ pub struct Scanner<'a> {
     col: usize,                  // Current column tokenized within source.
     line: usize,                 // Current line tokenized within source.
     pending: Option<Token>,      // A scanned token that hasn't been consumed.
-    keywords: HashMap<&'static str, TokenType>, // Mapping of PDDL keywords to their TokenType equivilant.
-    src: &'a str,                               // The source contents to be scanned.
 }
 
 impl<'a> Scanner<'a> {
     pub fn new(src: &'a str) -> Self {
-        let keywords = [
-            (":strips", TokenType::Strips),
-            (":typing", TokenType::Typing),
-            (":equality", TokenType::Equality),
-            (":negative-preconditions", TokenType::NegativePreconditions),
-            (
-                ":disjunctive-preconditions",
-                TokenType::DisjunctivePreconditions,
-            ),
-            (
-                ":existential-preconditions",
-                TokenType::ExistentialPreconditions,
-            ),
-            (
-                ":universal-preconditions",
-                TokenType::UniversalPreconditions,
-            ),
-            (
-                ":quantified-preconditions",
-                TokenType::QuantifiedPreconditions,
-            ),
-            (":conditional-effects", TokenType::ConditionalEffects),
-            (":fluents", TokenType::Fluents),
-            (":numeric-fluents", TokenType::NumericFluents),
-            (":object-fluents", TokenType::ObjectFluents),
-            (":adl", TokenType::Adl),
-            (":durative-actions", TokenType::DurativeActions),
-            (":duration-inequalities", TokenType::DurationInequalities),
-            (":continuous-effects", TokenType::ContinuousEffects),
-            (":derived-predicates", TokenType::DerivedPredicates),
-            (":timed-initial-literals", TokenType::TimedInitialLiterals),
-            (":preferences", TokenType::Preferences),
-            (":constraints", TokenType::Constraints),
-            (":action-costs", TokenType::ActionCosts),
-            (":requirements", TokenType::Requirements),
-            (":types", TokenType::Types),
-            (":constants", TokenType::Constants),
-            (":predicates", TokenType::Predicates),
-            (":functions", TokenType::Functions),
-            (":action", TokenType::Action),
-            (":durative-action", TokenType::DurativeAction),
-            (":precondition", TokenType::Precondition),
-            (":effect", TokenType::Effect),
-            (":parameters", TokenType::Parameters),
-            (":condition", TokenType::Condition),
-            (":duration", TokenType::Duration),
-            (":derived", TokenType::Derived),
-            (":domain", TokenType::Domain),
-            (":objects", TokenType::Objects),
-            (":init", TokenType::Init),
-            (":goal", TokenType::Goal),
-            (":metric", TokenType::Metric),
-        ]
-        .iter()
-        .cloned()
-        .collect();
-
         Scanner {
             next: None,
             pending: None,
             chars: src.char_indices(),
             col: 1,
             line: 1,
-            keywords,
-            src,
         }
     }
-
-    /// `next` returns the next possible token.
 
     /// `single` simply returns a Token whose TokenType is t while also
     /// incrementing the column number of the Tokenizer.
@@ -311,20 +252,6 @@ impl<'a> Scanner<'a> {
             col,
         }
     }
-
-    /// `keyword` returns the next token that resembels a valid keyword.
-    fn keyword(&mut self, start: usize) -> Token {
-        let mut tok = self.special(start, TokenType::Strips);
-        if tok.what == TokenType::Strips {
-            let kw: &str = &self.src[tok.pos..tok.end].to_ascii_lowercase();
-            if let Some(tt) = self.keywords.get(kw) {
-                tok.what = *tt
-            } else {
-                tok.what = TokenType::Invalid
-            }
-        }
-        tok
-    }
 }
 
 impl Iterator for Scanner<'_> {
@@ -362,7 +289,7 @@ impl Iterator for Scanner<'_> {
                 } else if ch == '?' {
                     return Some(self.special(pos, TokenType::Variable));
                 } else if ch == ':' {
-                    return Some(self.keyword(pos));
+                    return Some(self.special(pos, TokenType::Keyword));
                 } else if ch == '*' {
                     return Some(self.single(TokenType::Mult, pos));
                 } else if ch == '/' {
@@ -413,9 +340,11 @@ impl<'a> Token {
     /// passed to the `Scanner::scan`.
     pub fn to_str(self, src: &'a str) -> &'a str {
         match self.what {
-            TokenType::Invalid | TokenType::Ident | TokenType::Variable | TokenType::Number => {
-                &src[self.pos..self.end]
-            }
+            TokenType::Invalid
+            | TokenType::Ident
+            | TokenType::Keyword
+            | TokenType::Variable
+            | TokenType::Number => &src[self.pos..self.end],
             _ => self.what.as_str(),
         }
     }
@@ -438,47 +367,9 @@ pub enum TokenType {
     GreaterEq,
     Time,
     Ident,
+    Keyword,
     Variable,
     Number,
-    Strips,
-    Typing,
-    Equality,
-    NegativePreconditions,
-    DisjunctivePreconditions,
-    ExistentialPreconditions,
-    UniversalPreconditions,
-    QuantifiedPreconditions,
-    ConditionalEffects,
-    Fluents,
-    NumericFluents,
-    ObjectFluents,
-    Adl,
-    DurativeActions,
-    DurationInequalities,
-    ContinuousEffects,
-    DerivedPredicates,
-    TimedInitialLiterals,
-    Preferences,
-    Constraints,
-    ActionCosts,
-    Requirements,
-    Types,
-    Constants,
-    Predicates,
-    Functions,
-    Action,
-    DurativeAction,
-    Parameters,
-    Precondition,
-    Effect,
-    Condition,
-    Duration,
-    Derived,
-    Domain,
-    Objects,
-    Init,
-    Goal,
-    Metric,
 }
 
 impl TokenType {
@@ -498,47 +389,9 @@ impl TokenType {
             TokenType::GreaterEq => ">=",
             TokenType::Time => "#t",
             TokenType::Ident => "identifier",
+            TokenType::Keyword => "keyword",
             TokenType::Variable => "variable",
             TokenType::Number => "number",
-            TokenType::Strips => ":strips",
-            TokenType::Typing => ":typing",
-            TokenType::Equality => ":equality",
-            TokenType::NegativePreconditions => ":negative-preconditions",
-            TokenType::DisjunctivePreconditions => ":disjunctive-preconditions",
-            TokenType::ExistentialPreconditions => ":existential-preconditions",
-            TokenType::UniversalPreconditions => ":universal-preconditions",
-            TokenType::QuantifiedPreconditions => ":quantified-preconditions",
-            TokenType::ConditionalEffects => ":conditional-effects",
-            TokenType::Fluents => ":fluents",
-            TokenType::NumericFluents => ":numeric-fluents",
-            TokenType::ObjectFluents => ":object-fluents",
-            TokenType::Adl => ":adl",
-            TokenType::DurativeActions => ":durative-actions",
-            TokenType::DurationInequalities => ":duration-inequalities",
-            TokenType::ContinuousEffects => ":continuous-effects",
-            TokenType::DerivedPredicates => ":derived-predicates",
-            TokenType::TimedInitialLiterals => ":timed-initial-literals",
-            TokenType::Preferences => ":preferences",
-            TokenType::Constraints => ":constraints",
-            TokenType::ActionCosts => ":action-costs",
-            TokenType::Requirements => ":requirements",
-            TokenType::Types => ":types",
-            TokenType::Constants => ":constants",
-            TokenType::Predicates => ":predicates",
-            TokenType::Functions => ":functions",
-            TokenType::Action => ":action",
-            TokenType::DurativeAction => ":durative-action",
-            TokenType::Precondition => ":precondition",
-            TokenType::Effect => ":effect",
-            TokenType::Parameters => ":parameters",
-            TokenType::Condition => ":condition",
-            TokenType::Duration => ":duration",
-            TokenType::Derived => ":derived",
-            TokenType::Domain => ":domain",
-            TokenType::Objects => ":objects",
-            TokenType::Init => ":init",
-            TokenType::Goal => ":goal",
-            TokenType::Metric => ":metric",
         }
     }
 }
@@ -870,7 +723,7 @@ bar";
         assert_eq!(t.line, 1, "invalid line");
 
         let t = &tokens[1];
-        assert_eq!(t.what, TokenType::Typing);
+        assert_eq!(t.what, TokenType::Keyword);
         assert_eq!(t.pos, 4, "invalid position");
         assert_eq!(t.end, 11, "invalid end position");
         assert_eq!(t.col, 5, "invalid column");
@@ -878,7 +731,7 @@ bar";
         assert_eq!(t.to_str(TEST_STRING), ":typing");
 
         let t = &tokens[2];
-        assert_eq!(t.what, TokenType::Action);
+        assert_eq!(t.what, TokenType::Keyword);
         assert_eq!(t.pos, 13, "invalid position");
         assert_eq!(t.end, 20, "invalid end position");
         assert_eq!(t.col, 14, "invalid column");
@@ -886,51 +739,11 @@ bar";
         assert_eq!(t.to_str(TEST_STRING), ":action");
 
         let t = &tokens[3];
-        assert_eq!(t.what, TokenType::DurativeAction);
+        assert_eq!(t.what, TokenType::Keyword);
         assert_eq!(t.pos, 21, "invalid position");
         assert_eq!(t.end, 37, "invalid end position");
         assert_eq!(t.col, 22, "invalid column");
         assert_eq!(t.line, 1, "invalid line");
         assert_eq!(t.to_str(TEST_STRING), ":durative-action");
-    }
-
-    #[test]
-    fn invalid_keywords() {
-        const TEST_STRING: &'static str = ":strips:typin:action :";
-
-        let tokens = scan(TEST_STRING);
-
-        assert_eq!(tokens.len(), 4);
-
-        let t = &tokens[0];
-        assert_eq!(t.what, TokenType::Strips);
-        assert_eq!(t.pos, 0, "invalid position");
-        assert_eq!(t.end, 7, "invalid end position");
-        assert_eq!(t.col, 1, "invalid column");
-        assert_eq!(t.line, 1, "invalid line");
-
-        let t = &tokens[1];
-        assert_eq!(t.what, TokenType::Invalid);
-        assert_eq!(t.pos, 7, "invalid position");
-        assert_eq!(t.end, 13, "invalid end position");
-        assert_eq!(t.col, 8, "invalid column");
-        assert_eq!(t.line, 1, "invalid line");
-        assert_eq!(t.to_str(TEST_STRING), ":typin");
-
-        let t = &tokens[2];
-        assert_eq!(t.what, TokenType::Action);
-        assert_eq!(t.pos, 13, "invalid position");
-        assert_eq!(t.end, 20, "invalid end position");
-        assert_eq!(t.col, 14, "invalid column");
-        assert_eq!(t.line, 1, "invalid line");
-        assert_eq!(t.to_str(TEST_STRING), ":action");
-
-        let t = &tokens[3];
-        assert_eq!(t.what, TokenType::Invalid);
-        assert_eq!(t.pos, 21, "invalid position");
-        assert_eq!(t.end, 22, "invalid end position");
-        assert_eq!(t.col, 22, "invalid column");
-        assert_eq!(t.line, 1, "invalid line");
-        assert_eq!(t.to_str(TEST_STRING), ":");
     }
 }

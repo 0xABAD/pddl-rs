@@ -50,16 +50,16 @@ impl<'a> Parser<'a> {
         let domain_name = self.consume(TokenType::Ident)?.to_str(self.src);
         self.consume(TokenType::RParen)?;
 
-        const TOP_LEVEL_KEYWORDS: [TokenType; 9] = [
-            TokenType::Derived,
-            TokenType::DurativeAction,
-            TokenType::Action,
-            TokenType::Constraints,
-            TokenType::Functions,
-            TokenType::Predicates,
-            TokenType::Constants,
-            TokenType::Types,
-            TokenType::Requirements,
+        const TOP_LEVEL_KEYWORDS: [&str; 9] = [
+            ":derived",
+            ":durative-action",
+            ":action",
+            ":constraints",
+            ":functions",
+            ":predicates",
+            ":constants",
+            ":types",
+            ":requirements",
         ];
         let mut top_count = 9;
         let mut parse = Parse::default();
@@ -77,7 +77,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 9 {
                 top_count -= 1;
-                if let Ok(_) = self.next_is(TokenType::Requirements) {
+                if let Ok(_) = self.keyword_is(":requirements") {
                     parse.reqs = self.requirements()?;
                     self.reqs = parse.reqs;
                     continue;
@@ -86,7 +86,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 8 {
                 top_count -= 1;
-                if let Ok(_) = self.next_is(TokenType::Types) {
+                if let Ok(_) = self.keyword_is(":types") {
                     if !self.reqs.has(Requirement::Typing) {
                         return Err(self.missing(Requirement::Typing, ":types"));
                     }
@@ -97,7 +97,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 7 {
                 top_count -= 1;
-                if let Ok(_) = self.next_is(TokenType::Constants) {
+                if let Ok(_) = self.keyword_is(":constants") {
                     parse.const_pos = self.tokpos;
                     self.balance_parens();
                     continue;
@@ -106,7 +106,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 6 {
                 top_count -= 1;
-                if let Ok(_) = self.next_is(TokenType::Predicates) {
+                if let Ok(_) = self.keyword_is(":predicates") {
                     parse.pred_pos = self.tokpos;
                     self.balance_parens();
                     continue;
@@ -115,7 +115,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 5 {
                 top_count -= 1;
-                if let Ok(_) = self.next_is(TokenType::Functions) {
+                if let Ok(_) = self.keyword_is(":functions") {
                     parse.func_pos = self.tokpos;
                     self.balance_parens();
                     continue;
@@ -124,7 +124,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 4 {
                 top_count -= 1;
-                if let Ok(_) = self.next_is(TokenType::Constraints) {
+                if let Ok(_) = self.keyword_is(":constraints") {
                     if !self.reqs.has(Requirement::Constraints) {
                         return Err(self.missing(Requirement::Constraints, ":constraints section"));
                     }
@@ -134,13 +134,13 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            if let Ok(_) = self.next_is(TokenType::Action) {
+            if let Ok(_) = self.keyword_is(":action") {
                 parse.action_pos.push(self.tokpos);
                 self.balance_parens();
                 continue;
             }
 
-            if let Ok(_) = self.next_is(TokenType::DurativeAction) {
+            if let Ok(_) = self.keyword_is(":durative-action") {
                 if !self.reqs.has(Requirement::DurativeActions) {
                     return Err(self.missing(Requirement::DurativeActions, ":durative-action"));
                 }
@@ -149,7 +149,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if let Ok(_) = self.next_is(TokenType::Derived) {
+            if let Ok(_) = self.keyword_is(":derived") {
                 if !self.reqs.has(Requirement::DerivedPredicates) {
                     return Err(self.missing(Requirement::DerivedPredicates, ":derived predicate"));
                 }
@@ -158,7 +158,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            return Err(self.expect(&TOP_LEVEL_KEYWORDS[0..last_count]));
+            return Err(self.expect_str(&TOP_LEVEL_KEYWORDS[0..last_count]));
         }
 
         if let Some(t) = self.next() {
@@ -175,42 +175,59 @@ impl<'a> Parser<'a> {
 
     fn expect(&mut self, ttypes: &[TokenType]) -> Error {
         let what: Vec<&str> = ttypes.iter().map(|t| t.as_str()).collect();
+        self.expect_str(&what)
+    }
 
+    fn expect_str(&mut self, what: &[&str]) -> Error {
         if let Some(t) = self.next() {
             let have = t.to_str(self.src);
-            return Error::expect(t.line, t.col, have, &what);
+            return Error::expect(t.line, t.col, have, what);
         } else {
-            return Error::expect(self.line, self.col, "end of input", &what);
+            return Error::expect(self.line, self.col, "end of input", what);
         }
+    }
+
+    /// `consume_and` is a generalization of `consume` where `what_str` is
+    /// the value to be passed to an `Expect` error and `and` is a simple
+    /// closure that returns true.
+    fn consume_and<F>(&mut self, what: TokenType, what_str: &str, and: F) -> Result<&Token, Error>
+    where
+        F: FnOnce(&Token) -> bool,
+    {
+        let tok = self
+            .next()
+            .ok_or_else(|| Error::expect(self.line, self.col, "end of input", &[what_str]))?;
+
+        if tok.what != what || !and(tok) {
+            let have = tok.to_str(self.src);
+            return Err(Error::expect(self.line, self.col, have, &[what_str]));
+        }
+        Ok(tok)
     }
 
     /// `consume` consumes and returns the next token whose `TokenType` is
     /// is equal to `what`. If that is not the case then a `ParseError` is
     /// returned that expects `what`.
     fn consume(&mut self, what: TokenType) -> Result<&Token, Error> {
-        let tok = self
-            .next()
-            .ok_or_else(|| Error::expect(self.line, self.col, "end of input", &[what.as_str()]))?;
-
-        if tok.what != what {
-            let have = tok.to_str(self.src);
-            return Err(Error::expect(self.line, self.col, have, &[what.as_str()]));
-        }
-        Ok(tok)
+        self.consume_and(what, what.as_str(), |_| true)
     }
 
     /// `ident` consumes the next input if the next token is an identifier
     /// that matches `what`.
     fn ident(&mut self, what: &str) -> Result<&Token, Error> {
-        let tok = self
-            .next()
-            .ok_or_else(|| Error::expect(self.line, self.col, "end of input", &[what]))?;
+        let src = self.src;
+        self.consume_and(TokenType::Ident, what, |t| {
+            t.to_str(src).eq_ignore_ascii_case(what)
+        })
+    }
 
-        let have = tok.to_str(self.src);
-        if tok.what != TokenType::Ident || !have.eq_ignore_ascii_case(what) {
-            return Err(Error::expect(self.line, self.col, have, &[what]));
-        }
-        Ok(tok)
+    /// `keyword` consumes the next input if the next token is a keyword
+    /// that matches `what`.
+    fn keyword(&mut self, what: &str) -> Result<&Token, Error> {
+        let src = self.src;
+        self.consume_and(TokenType::Keyword, what, |t| {
+            t.to_str(src).eq_ignore_ascii_case(what)
+        })
     }
 
     /// `next_is_and` returns the next token in the stream if it has
@@ -237,6 +254,16 @@ impl<'a> Parser<'a> {
     /// `next_is` is like calling `next_is_and` where `and` is a tautology.
     fn next_is(&mut self, what: TokenType) -> Result<&Token, &'a str> {
         self.next_is_and(what, |_| true)
+    }
+
+    /// `keyword_is` returns true if the next token in the stream is an keyword
+    /// and whose string contents are case insensitive match to `what`.  If false
+    /// then the token is not consumed.
+    fn keyword_is(&mut self, what: &str) -> Result<&Token, &'a str> {
+        let src = self.src;
+        self.next_is_and(TokenType::Keyword, |t| {
+            t.to_str(src).eq_ignore_ascii_case(what)
+        })
     }
 
     // /// `ident_is` returns true if the next token in the stream is an identifier
@@ -284,29 +311,28 @@ impl<'a> Parser<'a> {
     /// `:strips`, `:typing`, and others) is expanded and also to the
     /// requirements bit vector.
     fn requirements(&mut self) -> Result<Reqs, Error> {
-        const ALL: &[TokenType] = &[
-            TokenType::RParen,
-            TokenType::Strips,
-            TokenType::Typing,
-            TokenType::Equality,
-            TokenType::NegativePreconditions,
-            TokenType::DisjunctivePreconditions,
-            TokenType::ExistentialPreconditions,
-            TokenType::UniversalPreconditions,
-            TokenType::QuantifiedPreconditions,
-            TokenType::ConditionalEffects,
-            TokenType::Fluents,
-            TokenType::NumericFluents,
-            TokenType::ObjectFluents,
-            TokenType::Adl,
-            TokenType::DurativeActions,
-            TokenType::DurationInequalities,
-            TokenType::ContinuousEffects,
-            TokenType::DerivedPredicates,
-            TokenType::TimedInitialLiterals,
-            TokenType::Preferences,
-            TokenType::Constraints,
-            TokenType::ActionCosts,
+        const ALL: &[&str] = &[
+            ":strips",
+            ":typing",
+            ":equality",
+            ":negative-preconditions",
+            ":disjunctive-preconditions",
+            ":existential-preconditions",
+            ":universal-preconditions",
+            ":quantified-preconditions",
+            ":conditional-effects",
+            ":fluents",
+            ":numeric-fluents",
+            ":object-fluents",
+            ":adl",
+            ":durative-actions",
+            ":duration-inequalities",
+            ":continuous-effects",
+            ":derived-predicates",
+            ":timed-initial-literals",
+            ":preferences",
+            ":constraints",
+            ":action-costs",
         ];
         // Parse the first requirement where it is expected to be at
         // least one requriement.
@@ -322,13 +348,15 @@ impl<'a> Parser<'a> {
     }
 
     /// `parse_requirement` is helper for `requirements`.
-    fn parse_requirement(&mut self, all: &[TokenType]) -> Result<Requirement, Error> {
+    fn parse_requirement(&mut self, all: &[&str]) -> Result<Requirement, Error> {
         for &r in all {
-            if let Ok(_) = self.next_is(r) {
-                return Ok(r.to_requirement());
+            if let Ok(_) = self.keyword_is(r) {
+                return Ok(to_requirement(r));
             }
         }
-        Err(self.expect(all))
+        let mut v = vec!["("];
+        v.extend_from_slice(all);
+        Err(self.expect_str(&v))
     }
 
     fn semantic(&self, s: &str) -> Error {
@@ -756,7 +784,7 @@ impl<'a> Parser<'a> {
         action.line = act_token.line;
         action.col = act_token.col;
 
-        self.consume(TokenType::Parameters)?;
+        self.keyword(":parameters")?;
         action.params = self.typed_list_variable()?;
 
         result.what = ParsingWhat::Action;
@@ -865,34 +893,32 @@ impl Signature {
     }
 }
 
-impl TokenType {
-    /// `to_requirement` transforms the `TokenType` to its equivilant Requirement.
-    /// This method will panic if there is no such equivilant.
-    fn to_requirement(self) -> Requirement {
-        match self {
-            TokenType::Strips => Requirement::Strips,
-            TokenType::Typing => Requirement::Typing,
-            TokenType::Equality => Requirement::Equality,
-            TokenType::NegativePreconditions => Requirement::NegativePreconditions,
-            TokenType::DisjunctivePreconditions => Requirement::DisjunctivePreconditions,
-            TokenType::ExistentialPreconditions => Requirement::ExistentialPreconditions,
-            TokenType::UniversalPreconditions => Requirement::UniversalPreconditions,
-            TokenType::QuantifiedPreconditions => Requirement::QuantifiedPreconditions,
-            TokenType::ConditionalEffects => Requirement::ConditionalEffects,
-            TokenType::Fluents => Requirement::Fluents,
-            TokenType::NumericFluents => Requirement::NumericFluents,
-            TokenType::ObjectFluents => Requirement::ObjectFluents,
-            TokenType::Adl => Requirement::Adl,
-            TokenType::DurativeActions => Requirement::DurativeActions,
-            TokenType::DurationInequalities => Requirement::DurationInequalities,
-            TokenType::ContinuousEffects => Requirement::ContinuousEffects,
-            TokenType::DerivedPredicates => Requirement::DerivedPredicates,
-            TokenType::TimedInitialLiterals => Requirement::TimedInitialLiterals,
-            TokenType::Preferences => Requirement::Preferences,
-            TokenType::Constraints => Requirement::Constraints,
-            TokenType::ActionCosts => Requirement::ActionCosts,
-            _ => panic!("no such Requirement for TokenType {:?}", self),
-        }
+/// `to_requirement` transforms the `TokenType` to its equivilant Requirement.
+/// This method will panic if there is no such equivilant.
+fn to_requirement(s: &str) -> Requirement {
+    match s {
+        ":strips" => Requirement::Strips,
+        ":typing" => Requirement::Typing,
+        ":equality" => Requirement::Equality,
+        ":negative-preconditions" => Requirement::NegativePreconditions,
+        ":disjunctive-preconditions" => Requirement::DisjunctivePreconditions,
+        ":existential-preconditions" => Requirement::ExistentialPreconditions,
+        ":universal-preconditions" => Requirement::UniversalPreconditions,
+        ":quantified-preconditions" => Requirement::QuantifiedPreconditions,
+        ":conditional-effects" => Requirement::ConditionalEffects,
+        ":fluents" => Requirement::Fluents,
+        ":numeric-fluents" => Requirement::NumericFluents,
+        ":object-fluents" => Requirement::ObjectFluents,
+        ":adl" => Requirement::Adl,
+        ":durative-actions" => Requirement::DurativeActions,
+        ":duration-inequalities" => Requirement::DurationInequalities,
+        ":continuous-effects" => Requirement::ContinuousEffects,
+        ":derived-predicates" => Requirement::DerivedPredicates,
+        ":timed-initial-literals" => Requirement::TimedInitialLiterals,
+        ":preferences" => Requirement::Preferences,
+        ":constraints" => Requirement::Constraints,
+        ":action-costs" => Requirement::ActionCosts,
+        _ => panic!("no such Requirement for TokenType {:?}", s),
     }
 }
 
@@ -1140,15 +1166,15 @@ mod test {
         let tokens = scanner::scan(TEST);
         let mut parser = Parser::new(TEST, &tokens);
 
-        assert!(parser.next_is(TokenType::Requirements).is_ok());
+        assert!(parser.keyword_is(":requirements").is_ok());
         assert!(parser.next_is(TokenType::LParen).is_ok());
-        assert!(parser.next_is(TokenType::Action).is_ok());
+        assert!(parser.keyword_is(":action").is_ok());
         assert!(parser.next_is(TokenType::RParen).is_ok());
     }
 
     #[test]
     fn parse_requirements() -> Result<(), Error> {
-        const TEST: &'static str = ":typing :equality)";
+        const TEST: &'static str = ":Typing :equality)";
 
         let tokens = scanner::scan(TEST);
         let mut parser = Parser::new(TEST, &tokens);
