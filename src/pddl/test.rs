@@ -23,19 +23,22 @@ fn check_if_not_domain() {
 }
 
 #[test]
-fn parse_top_level_name() -> Result<(), ParseErrors> {
+fn parse_domain_name() -> Result<(), Errors> {
     let dom = Domain::parse("(define (domain foo))")?;
     assert_eq!(dom.name, "foo");
     Ok(())
 }
 
 #[test]
-fn unexpected_top_level_end_of_input() {
+fn unexpected_end_of_input() {
     if let Err(e) = Domain::parse("(define (domain foo)") {
         let pe = &e[0];
         match &pe.what {
-            ParseErrorType::Expect { have: _, expect } => assert_eq!(*expect, vec!["(", ")"]),
-            _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
+            ErrorType::Expect { have, expect } => {
+                assert_eq!(have, "end of input");
+                assert_eq!(*expect, vec!["(", ")"]);
+            }
+            _ => panic!("Invalid ErrorType -- have {:?}, want Expect", pe.what),
         }
     } else {
         panic!("Expected error but received successful domain parse");
@@ -43,12 +46,13 @@ fn unexpected_top_level_end_of_input() {
 }
 
 #[test]
-fn invalid_top_level_extra_right_paren() {
+fn detects_extra_input() {
+    // Text contains an extra right paren.
     if let Err(e) = Domain::parse("(define (domain foo)))") {
         let pe = &e[0];
         match &pe.what {
-            ParseErrorType::ExtraInput(s) => assert_eq!(*s, ")"),
-            _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
+            ErrorType::ExtraInput(s) => assert_eq!(*s, ")"),
+            _ => panic!("Invalid ErrorType -- have {:?}, want Expect", pe.what),
         }
     } else {
         panic!("Expected error but received successful domain parse");
@@ -56,13 +60,13 @@ fn invalid_top_level_extra_right_paren() {
 }
 
 #[test]
-fn invalid_token_at_top_level() {
+fn detects_invalid_token() {
     if let Err(e) = Domain::parse("(define (domain foo) %)") {
         let pe = &e[0];
         match &pe.what {
-            ParseErrorType::Expect { have: _, expect } => assert_eq!(*expect, vec!["(", ")"]),
+            ErrorType::Expect { have: _, expect } => assert_eq!(*expect, vec!["(", ")"]),
             _ => panic!(
-                "Invalid ParseErrorType -- have {:?}, want Expect('(', ')')",
+                "Invalid ErrorType -- have {:?}, want Expect('(', ')')",
                 pe.what
             ),
         }
@@ -72,11 +76,11 @@ fn invalid_token_at_top_level() {
 }
 
 #[test]
-fn invalid_top_level_keyword() {
+fn detects_invalid_top_level_keyword() {
     if let Err(e) = Domain::parse("(define (domain foo) (:foo))") {
         let pe = &e[0];
         match &pe.what {
-            ParseErrorType::Expect { have: _, expect } => assert_eq!(
+            ErrorType::Expect { have: _, expect } => assert_eq!(
                 *expect,
                 vec![
                     ":derived",
@@ -90,7 +94,7 @@ fn invalid_top_level_keyword() {
                     ":requirements",
                 ]
             ),
-            _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
+            _ => panic!("Invalid ErrorType -- have {:?}, want Expect", pe.what),
         }
     } else {
         panic!("Expected error but received successful domain parse");
@@ -98,7 +102,7 @@ fn invalid_top_level_keyword() {
 }
 
 #[test]
-fn can_parse_requirements() -> Result<(), ParseErrors> {
+fn can_parse_requirements() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips
@@ -149,22 +153,23 @@ fn can_parse_requirements() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn no_requirements_implies_strips() -> Result<(), ParseErrors> {
+fn no_requirements_implies_strips() -> Result<(), Errors> {
     let d = Domain::parse("(define (domain foo))")?;
     assert!(d.has_requirement(Requirement::Strips));
     Ok(())
 }
 
 #[test]
-fn parse_requirements_allows_duplicates() -> Result<(), ParseErrors> {
+fn parse_requirements_allows_duplicates() -> Result<(), Errors> {
     let d = Domain::parse("(define (domain foo) (:requirements :strips :typing :strips :typing))")?;
     assert!(d.has_requirement(Requirement::Strips));
     assert!(d.has_requirement(Requirement::Typing));
+    assert!(!d.has_requirement(Requirement::Equality));
     Ok(())
 }
 
 #[test]
-fn quantified_preconditions_implies_others() -> Result<(), ParseErrors> {
+fn quantified_preconditions_implies_others() -> Result<(), Errors> {
     let d = Domain::parse("(define (domain foo) (:requirements :quantified-preconditions))")?;
     assert!(d.has_requirement(Requirement::QuantifiedPreconditions));
     assert!(d.has_requirement(Requirement::ExistentialPreconditions));
@@ -173,7 +178,7 @@ fn quantified_preconditions_implies_others() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn fluents_implies_others() -> Result<(), ParseErrors> {
+fn fluents_implies_others() -> Result<(), Errors> {
     let d = Domain::parse("(define (domain foo) (:requirements :fluents))")?;
     assert!(d.has_requirement(Requirement::Fluents));
     assert!(d.has_requirement(Requirement::NumericFluents));
@@ -182,7 +187,7 @@ fn fluents_implies_others() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn adl_implies_others() -> Result<(), ParseErrors> {
+fn adl_implies_others() -> Result<(), Errors> {
     let d = Domain::parse("(define (domain foo) (:requirements :adl))")?;
     assert!(d.has_requirement(Requirement::Adl));
     assert!(d.has_requirement(Requirement::Strips));
@@ -198,7 +203,7 @@ fn adl_implies_others() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn timed_initial_literals_implies_others() -> Result<(), ParseErrors> {
+fn timed_initial_literals_implies_others() -> Result<(), Errors> {
     let d = Domain::parse("(define (domain foo) (:requirements :timed-initial-literals))")?;
     assert!(d.has_requirement(Requirement::TimedInitialLiterals));
     assert!(d.has_requirement(Requirement::DurativeActions));
@@ -212,12 +217,34 @@ fn parse_requirements_fails_with_invalid_requirement() {
     if let Err(e) = Domain::parse(DOMAIN) {
         let pe = &e[0];
         match &pe.what {
-            ParseErrorType::Expect { have: _, expect } => {
-                let mut v = REQUIREMENTS.to_vec();
-                v.push(")");
+            ErrorType::Expect { have: _, expect } => {
+                let v = &[
+                    "(",
+                    ":strips",
+                    ":typing",
+                    ":equality",
+                    ":negative-preconditions",
+                    ":disjunctive-preconditions",
+                    ":existential-preconditions",
+                    ":universal-preconditions",
+                    ":quantified-preconditions",
+                    ":conditional-effects",
+                    ":fluents",
+                    ":numeric-fluents",
+                    ":object-fluents",
+                    ":adl",
+                    ":durative-actions",
+                    ":duration-inequalities",
+                    ":continuous-effects",
+                    ":derived-predicates",
+                    ":timed-initial-literals",
+                    ":preferences",
+                    ":constraints",
+                    ":action-costs",
+                ];
                 assert_eq!(*expect, v)
             }
-            _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
+            _ => panic!("Invalid ErrorType -- have {:?}, want Expect", pe.what),
         }
     } else {
         panic!("Expected error but received successful domain parse");
@@ -231,12 +258,34 @@ fn parse_requirements_fails_with_invalid_token() {
     if let Err(e) = Domain::parse(DOMAIN) {
         let pe = &e[0];
         match &pe.what {
-            ParseErrorType::Expect { have: _, expect } => {
-                let mut v = REQUIREMENTS.to_vec();
-                v.push(")");
+            ErrorType::Expect { have: _, expect } => {
+                let v = &[
+                    "(",
+                    ":strips",
+                    ":typing",
+                    ":equality",
+                    ":negative-preconditions",
+                    ":disjunctive-preconditions",
+                    ":existential-preconditions",
+                    ":universal-preconditions",
+                    ":quantified-preconditions",
+                    ":conditional-effects",
+                    ":fluents",
+                    ":numeric-fluents",
+                    ":object-fluents",
+                    ":adl",
+                    ":durative-actions",
+                    ":duration-inequalities",
+                    ":continuous-effects",
+                    ":derived-predicates",
+                    ":timed-initial-literals",
+                    ":preferences",
+                    ":constraints",
+                    ":action-costs",
+                ];
                 assert_eq!(*expect, v)
             }
-            _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
+            _ => panic!("Invalid ErrorType -- have {:?}, want Expect", pe.what),
         }
     } else {
         panic!("Expected error but received successful domain parse");
@@ -244,7 +293,7 @@ fn parse_requirements_fails_with_invalid_token() {
 }
 
 #[test]
-fn can_parse_types() -> Result<(), ParseErrors> {
+fn can_parse_types() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -253,45 +302,42 @@ fn can_parse_types() -> Result<(), ParseErrors> {
                    moped - (either motorcycle bicycle)))",
     )?;
 
-    assert_eq!(d.id_for_type("object"), Some(&0));
-    assert_eq!(d.id_for_type("car"), Some(&1));
-    assert_eq!(d.id_for_type("truck"), Some(&2));
-    assert_eq!(d.id_for_type("motorcycle"), Some(&3));
-    assert_eq!(d.id_for_type("vehicle"), Some(&4));
-    assert_eq!(d.id_for_type("bicycle"), Some(&5));
-    assert_eq!(d.id_for_type("moped"), Some(&6));
+    assert_eq!(d.type_id("object"), Some(0));
+    assert_eq!(d.type_id("car"), Some(1));
+    assert_eq!(d.type_id("truck"), Some(2));
+    assert_eq!(d.type_id("motorcycle"), Some(3));
+    assert_eq!(d.type_id("vehicle"), Some(4));
+    assert_eq!(d.type_id("bicycle"), Some(5));
+    assert_eq!(d.type_id("moped"), Some(6));
 
-    let veh: HashSet<_> = [4].iter().cloned().collect();
-    assert!(d.parent_type_ids(1).is_subset(&veh));
-    assert!(d.parent_type_ids(1).is_superset(&veh));
+    let object = d.type_id("object").unwrap();
+    let car = d.type_id("car").unwrap();
+    let truck = d.type_id("truck").unwrap();
+    let motorcycle = d.type_id("motorcycle").unwrap();
+    let vehicle = d.type_id("vehicle").unwrap();
+    let bicycle = d.type_id("bicycle").unwrap();
+    let moped = d.type_id("moped").unwrap();
 
-    assert!(d.parent_type_ids(2).is_subset(&veh));
-    assert!(d.parent_type_ids(2).is_superset(&veh));
-
-    assert!(d.parent_type_ids(3).is_subset(&veh));
-    assert!(d.parent_type_ids(3).is_superset(&veh));
-
-    assert!(d.parent_type_ids(4).is_empty());
-
-    let obj: HashSet<_> = [0].iter().cloned().collect();
-    assert!(d.parent_type_ids(5).is_subset(&obj));
-    assert!(d.parent_type_ids(5).is_superset(&obj));
-
-    let many: HashSet<_> = [3, 5].iter().cloned().collect();
-    assert!(d.parent_type_ids(6).is_subset(&many));
-    assert!(d.parent_type_ids(6).is_superset(&many));
+    assert!(d.is_child_type_an_ancestor_of(car, vehicle));
+    assert!(d.is_child_type_an_ancestor_of(truck, vehicle));
+    assert!(d.is_child_type_an_ancestor_of(motorcycle, vehicle));
+    assert!(d.is_child_type_an_ancestor_of(bicycle, object));
+    assert!(d.is_child_type_an_ancestor_of(moped, motorcycle));
+    assert!(d.is_child_type_an_ancestor_of(moped, bicycle));
+    assert!(d.is_child_type_an_ancestor_of(moped, object));
+    assert!(d.is_child_type_an_ancestor_of(moped, vehicle));
 
     Ok(())
 }
 
 #[test]
-fn has_default_object() -> Result<(), ParseErrors> {
+fn has_default_object() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
            (:types))",
     )?;
-    assert_eq!(d.id_for_type("object"), Some(&0));
+    assert_eq!(d.type_id("object"), Some(0));
     Ok(())
 }
 
@@ -302,25 +348,33 @@ fn object_can_not_be_a_new_type() {
            (:requirements :strips :typing)
            (:types object))",
     );
-    if let Ok(_) = d {
-        panic!("Received successful parse when error should have occurred.");
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "object declared as a derived type");
+            return;
+        }
     }
+    panic!("object was allowed to be a derived type");
 }
 
 #[test]
-fn object_can_not_be_a_new_type_2() {
+fn object_can_not_be_a_new_type_after_first_type() {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
            (:types car object))",
     );
-    if let Ok(_) = d {
-        panic!("Received successful parse when error should have occurred.");
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "object declared as a derived type");
+            return;
+        }
     }
+    panic!("object was allowed to be a derived type");
 }
 
 #[test]
-fn circular_inheritance_causes_error() {
+fn circular_inheritance_detected_1() {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -328,14 +382,17 @@ fn circular_inheritance_causes_error() {
                    square - (either rectangle shape)
                    rectangle - square))",
     );
-    // Circular inheritance from single parent.
-    if let Ok(_) = d {
-        panic!("Received successful parse when error should have occurred.");
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "rectangle has circular inherintance with square");
+            return;
+        }
     }
+    panic!("circular inheritance was not detected");
 }
 
 #[test]
-fn circular_inheritance_causes_error_2() {
+fn circular_inheritance_detected_2() {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -344,13 +401,17 @@ fn circular_inheritance_causes_error_2() {
                    rectangle - (either square box)))",
     );
     // Circular inheritance from either type.
-    if let Ok(_) = d {
-        panic!("Received successful parse when error should have occurred.");
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "rectangle has circular inherintance with square");
+            return;
+        }
     }
+    panic!("circular inheritance was not detected");
 }
 
 #[test]
-fn circular_inheritance_causes_error_3() {
+fn circular_inheritance_detected_3() {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -359,103 +420,17 @@ fn circular_inheritance_causes_error_3() {
                    rectangle - (either box square)))",
     );
     // Circular inheritance from either type.
-    if let Ok(_) = d {
-        panic!("Received successful parse when error should have occurred.");
-    }
-}
-
-#[test]
-fn correct_constants_from_top_level() -> Result<(), ParseError> {
-    let mut dp = DomainParser::new(
-        "(define (domain foo)
-(:requirements :strips :typing)
-(:types item)
-(:constants foo bar - item))",
-    );
-    let pr = dp.top_level()?;
-    assert_eq!(pr.const_loc.line, 4);
-    assert_eq!(pr.const_loc.col, 13);
-    assert_eq!(pr.const_loc.pos, 79);
-    Ok(())
-}
-
-#[test]
-fn unbalanced_parens_in_constants() {
-    let mut dp = DomainParser::new(
-        "(define (domain foo)
-(:requirements :strips :typing)
-(:types item)
-(:constants foo bar - item",
-    );
-    let pr = dp.top_level();
-    if let Err(pe) = pr {
-        match pe.what {
-            ParseErrorType::Expect { have: _, expect: _ } => return,
-            _ => panic!("Invalid ParseErrorType -- have {:?}, want Expect", pe.what),
-        }
-    } else {
-        panic!("Received successful parse when error should have occurred.");
-    }
-}
-
-#[test]
-fn constraints_section_missing_requirement() {
-    let d = Domain::parse(
-        "(define (domain foo)
-           (:requirements :strips)
-           (:constraints (and)))",
-    );
-    if let Err(pe) = d {
-        if let ParseErrorType::MissingRequirement { req, what: _ } = pe[0].what {
-            if req == Requirement::Constraints {
-                return;
-            }
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "rectangle has circular inherintance with square");
+            return;
         }
     }
-    panic!("Missing constraints requirement error not returned.");
+    panic!("circular inheritance was not detected");
 }
 
 #[test]
-fn durative_action_missing_requirement() {
-    let d = Domain::parse(
-        "(define (domain foo)
-           (:requirements :strips)
-           (:durative-action bar
-              :parameters ()
-              :duration ()
-              :condition ()
-              :effect ()))",
-    );
-    if let Err(pe) = d {
-        if let ParseErrorType::MissingRequirement { req, what: _ } = pe[0].what {
-            if req == Requirement::DurativeActions {
-                return;
-            }
-        }
-    }
-    panic!("Missing durative-actions requirement error not returned.");
-}
-
-#[test]
-fn derived_predicate_missing_requirement() {
-    let d = Domain::parse(
-        "(define (domain foo)
-           (:requirements :strips)
-           (:predicates (baz) (quux))
-           (:derived (bar) (and (baz) (quux))))",
-    );
-    if let Err(pe) = d {
-        if let ParseErrorType::MissingRequirement { req, what: _ } = pe[0].what {
-            if req == Requirement::DerivedPredicates {
-                return;
-            }
-        }
-    }
-    panic!("Missing derived-predicates requirement error not returned.");
-}
-
-#[test]
-fn can_parse_predicates_without_typing() -> Result<(), ParseErrors> {
+fn can_parse_predicates_without_typing() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips)
@@ -481,14 +456,14 @@ fn can_parse_predicates_without_typing() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn can_parse_predicates() -> Result<(), ParseErrors> {
+fn can_parse_predicates() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
            (:types block square sphere)
            (:predicates (bar ?a - object)
-                        (baz ?a ?b - sphere ?c -block)
-                        (quux ?a - square ?b ?c - (either block square))))",
+                        (baz ?a ?b - Sphere ?c -block)
+                        (quux?a - square?b?c - (either Block square))))",
     )?;
 
     let bar = &d.predicates[0];
@@ -510,7 +485,7 @@ fn can_parse_predicates() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn predicates_collates_either_types() -> Result<(), ParseErrors> {
+fn predicates_collates_either_types() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -536,7 +511,7 @@ fn predicates_collates_either_types() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn parse_predicates_allow_mismatching_arity() -> Result<(), ParseErrors> {
+fn parse_predicates_allow_mismatching_arity() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -568,7 +543,7 @@ fn parse_predicates_fails_with_duplicated_parameter() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::SemanticError(s) = &e[0].what {
+        if let ErrorType::SemanticError(s) = &e[0].what {
             assert_eq!(s, "?A is a duplicated parameter");
             return;
         }
@@ -588,7 +563,7 @@ fn parse_predicates_fails_with_type_not_defined() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::TypeNotDefined(t) = &e[0].what {
+        if let ErrorType::TypeNotDefined(t) = &e[0].what {
             assert_eq!(t, "bloc");
             return;
         }
@@ -608,7 +583,7 @@ fn parse_predicates_fails_with_type_not_defined_2() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::TypeNotDefined(t) = &e[0].what {
+        if let ErrorType::TypeNotDefined(t) = &e[0].what {
             assert_eq!(t, "shape");
             return;
         }
@@ -627,7 +602,7 @@ fn parse_predicates_fails_when_typing_not_declared() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::MissingRequirement { req, what: _ } = &e[0].what {
+        if let ErrorType::MissingRequirement { req, what: _ } = &e[0].what {
             assert_eq!(*req, Requirement::Typing);
             return;
         }
@@ -636,7 +611,7 @@ fn parse_predicates_fails_when_typing_not_declared() {
 }
 
 #[test]
-fn can_parse_functions() -> Result<(), ParseErrors> {
+fn can_parse_functions() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing :fluents)
@@ -695,7 +670,7 @@ fn can_parse_functions() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn parse_functions_allow_mismatching_arity() -> Result<(), ParseErrors> {
+fn parse_functions_allow_mismatching_arity() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing :fluents)
@@ -718,7 +693,7 @@ fn parse_functions_allow_mismatching_arity() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn functions_collates_either_types() -> Result<(), ParseErrors> {
+fn functions_collates_either_types() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing :fluents)
@@ -773,7 +748,7 @@ fn parse_functions_fails_with_duplicated_parameter() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::SemanticError(s) = &e[0].what {
+        if let ErrorType::SemanticError(s) = &e[0].what {
             assert_eq!(s, "?A is a duplicated parameter");
             return;
         }
@@ -790,7 +765,7 @@ fn parse_functions_fails_when_typing_not_declared() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::MissingRequirement { req, what: _ } = e[0].what {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
             assert_eq!(req, Requirement::Typing);
             return;
         }
@@ -807,7 +782,7 @@ fn parse_functions_fails_when_typing_not_declared2() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::MissingRequirement { req, what: _ } = e[0].what {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
             assert_eq!(req, Requirement::Typing);
             return;
         }
@@ -825,7 +800,7 @@ fn parse_functions_fails_when_object_fluents_not_declared() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::MissingRequirement { req, what: _ } = e[0].what {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
             assert_eq!(req, Requirement::ObjectFluents);
             return;
         }
@@ -843,7 +818,7 @@ fn parse_functions_fails_when_numeric_fluents_not_declared() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::MissingRequirement { req, what: _ } = e[0].what {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
             assert_eq!(req, Requirement::NumericFluents);
             return;
         }
@@ -852,7 +827,7 @@ fn parse_functions_fails_when_numeric_fluents_not_declared() {
 }
 
 #[test]
-fn parse_functions_fails_when_numeric_fluents_not_declared2() {
+fn parse_functions_fails_when_numeric_fluents_not_declared_2() {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -861,7 +836,7 @@ fn parse_functions_fails_when_numeric_fluents_not_declared2() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::MissingRequirement { req, what: _ } = e[0].what {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
             assert_eq!(req, Requirement::NumericFluents);
             return;
         }
@@ -879,7 +854,7 @@ fn parse_functions_fails_when_type_not_defined() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::TypeNotDefined(t) = &e[0].what {
+        if let ErrorType::TypeNotDefined(t) = &e[0].what {
             assert_eq!(*t, "ball");
             return;
         }
@@ -888,7 +863,7 @@ fn parse_functions_fails_when_type_not_defined() {
 }
 
 #[test]
-fn can_parse_constants() -> Result<(), ParseErrors> {
+fn can_parse_constants() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -922,7 +897,7 @@ fn can_parse_constants() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn allow_parsing_of_empty_constants() -> Result<(), ParseErrors> {
+fn allow_parsing_of_empty_constants() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -934,7 +909,7 @@ fn allow_parsing_of_empty_constants() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn allow_parsing_constants_without_types() -> Result<(), ParseErrors> {
+fn allow_parsing_constants_without_types() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips)
@@ -955,7 +930,7 @@ fn allow_parsing_constants_without_types() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn constants_collates_either_types() -> Result<(), ParseErrors> {
+fn constants_collates_either_types() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -989,7 +964,7 @@ fn constants_return_error_when_typing_not_declared() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::MissingRequirement { req, what: _ } = e[0].what {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
             assert_eq!(req, Requirement::Typing);
             return;
         }
@@ -998,7 +973,7 @@ fn constants_return_error_when_typing_not_declared() {
 }
 
 #[test]
-fn can_parse_action_params() -> Result<(), ParseErrors> {
+fn can_parse_action_params() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -1031,7 +1006,7 @@ fn can_parse_action_params() -> Result<(), ParseErrors> {
 }
 
 #[test]
-fn actions_collates_either_types() -> Result<(), ParseErrors> {
+fn actions_collates_either_types() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
            (:requirements :strips :typing)
@@ -1059,7 +1034,7 @@ fn return_error_for_duplicate_action() {
     );
 
     if let Err(e) = d {
-        if let ParseErrorType::SemanticError(s) = &e[0].what {
+        if let ErrorType::SemanticError(s) = &e[0].what {
             assert_eq!(s, "action, bar, is already defined");
             return;
         }
