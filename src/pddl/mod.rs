@@ -80,16 +80,16 @@ impl Domain {
         let tokens = scanner::scan(src);
         let mut top = Parser::new(src, &tokens);
 
-        let result: Parse;
+        let top_parse: Parse;
         match top.domain_top() {
-            Ok(pr) => result = pr,
+            Ok(pr) => top_parse = pr,
             Err(e) => return Err(vec![e]),
         }
 
         let mut dom = Domain::default();
-        dom.name = result.name.to_string();
-        dom.reqs = result.reqs;
-        dom.types = result.types;
+        dom.name = top_parse.name.to_string();
+        dom.reqs = top_parse.reqs;
+        dom.types = top_parse.types;
 
         let mut parsers: Vec<Parser> = vec![];
         let dom_types = &dom.types;
@@ -104,18 +104,14 @@ impl Domain {
             parsers.push(p);
         };
 
-        if result.pred_pos != 0 {
-            new_parser(ParsingWhat::Predicates, result.pred_pos);
+        if top_parse.pred_pos != 0 {
+            new_parser(ParsingWhat::Predicates, top_parse.pred_pos);
         }
-        if result.func_pos != 0 {
-            new_parser(ParsingWhat::Functions, result.func_pos);
+        if top_parse.func_pos != 0 {
+            new_parser(ParsingWhat::Functions, top_parse.func_pos);
         }
-        if result.const_pos != 0 {
-            new_parser(ParsingWhat::Constants, result.const_pos);
-        }
-
-        for pos in result.action_pos {
-            new_parser(ParsingWhat::Action, pos);
+        if top_parse.const_pos != 0 {
+            new_parser(ParsingWhat::Constants, top_parse.const_pos);
         }
 
         let results: Vec<Result<Parse, Error>> = parsers
@@ -124,14 +120,11 @@ impl Domain {
                 ParsingWhat::Predicates => p.predicates(),
                 ParsingWhat::Functions => p.functions(),
                 ParsingWhat::Constants => p.constants(),
-                ParsingWhat::Action => p.action(),
                 _ => panic!("Parsing incorrect contents: {:?}", p.what),
             })
             .collect();
 
         let mut errors: Vec<Error> = vec![];
-        let mut act_id: ActionId = 0;
-        let mut act_names: HashSet<String> = HashSet::new();
 
         for result in results {
             let parse = match result {
@@ -148,6 +141,91 @@ impl Domain {
                 ParsingWhat::Predicates => dom.predicates = parse.predicates,
                 ParsingWhat::Functions => dom.functions = parse.functions,
                 ParsingWhat::Constants => dom.constants = parse.constants,
+                _ => continue,
+            }
+        }
+
+        if errors.len() > 0 {
+            return Err(errors);
+        }
+
+        let mut parsers: Vec<Parser> = vec![];
+        let dom_types = &dom.types;
+        let dom_preds = &dom.predicates;
+        let dom_funcs = &dom.functions;
+        let dom_consts = &dom.constants;
+        let mut pred_map: parser::PredMap = parser::PredMap::new();
+        let mut func_map: parser::FuncMap = parser::FuncMap::new();
+        let mut const_map: parser::ConstMap = parser::ConstMap::new();
+
+        for i in 0..dom.predicates.len() {
+            let p = &dom.predicates[i];
+            if p.id != i {
+                panic!("Predicate ID not equal to its index");
+            }
+            pred_map.insert(p.signature_key(), p.id);
+        }
+
+        for i in 0..dom.functions.len() {
+            let f = &dom.functions[i];
+            if f.id != i {
+                panic!("Function ID not equal to its index");
+            }
+            func_map.insert(f.signature_key(), f.id);
+        }
+
+        for i in 0..dom.constants.len() {
+            let c = &dom.constants[i];
+            if c.id != i {
+                panic!("Constant ID not equal to its index");
+            }
+            const_map.insert(c.name.clone(), c.id);
+        }
+
+        let mut new_parser = |what, pos| {
+            let mut p = Parser::new(src, &tokens);
+
+            p.tokpos = pos;
+            p.reqs = dom.reqs;
+            p.what = what;
+            p.types = Some(dom_types);
+            p.pred_map = Some(&pred_map);
+            p.predicates = Some(dom_preds);
+            p.func_map = Some(&func_map);
+            p.functions = Some(dom_funcs);
+            p.const_map = Some(&const_map);
+            p.constants = Some(dom_consts);
+
+            parsers.push(p);
+        };
+
+        for pos in top_parse.action_pos {
+            new_parser(ParsingWhat::Action, pos);
+        }
+
+        let results: Vec<Result<Parse, Error>> = parsers
+            .par_iter_mut()
+            .map(|p| match p.what {
+                ParsingWhat::Action => p.action(),
+                _ => panic!("Parsing incorrect contents: {:?}", p.what),
+            })
+            .collect();
+
+        let mut act_id: ActionId = 0;
+        let mut act_names: HashSet<String> = HashSet::new();
+
+        for result in results {
+            let parse = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    errors.push(e);
+                    Parse::default()
+                }
+            };
+            if errors.len() > 0 {
+                continue;
+            }
+            match parse.what {
                 ParsingWhat::Action => {
                     let mut act = parse.action.expect("did not receive a parsed :action");
 
@@ -172,7 +250,6 @@ impl Domain {
         if errors.len() > 0 {
             return Err(errors);
         }
-
         Ok(dom)
     }
 
@@ -209,6 +286,12 @@ pub struct Predicate {
     pub params: Vec<Param>,
 }
 
+impl Predicate {
+    fn signature_key(&self) -> String {
+        parser::Signature::create_key(&self.name, self.params.len())
+    }
+}
+
 /// `Function` represents a predicate definition that is found
 /// within the `:predicates` section of a PDDL domain.
 #[derive(Debug)]
@@ -223,6 +306,12 @@ pub struct Function {
     pub return_types: Vec<TypeId>,
     /// True if the function returns a number.
     pub returns_number: bool,
+}
+
+impl Function {
+    fn signature_key(&self) -> String {
+        parser::Signature::create_key(&self.name, self.params.len())
+    }
 }
 
 /// `Param` is a parsed parameter that can be found within various
@@ -274,6 +363,8 @@ pub struct Action {
     pub name: String,
     /// Parameters of the action.
     pub params: Vec<Param>,
+    /// Possible precondition of the action.
+    pub precondition: Option<Goal>,
 
     line: usize, // Line number where the action is defined.
     col: usize,  // Column number where the action is defined.
@@ -287,6 +378,60 @@ impl Action {
             params: vec![],
             line: 0,
             col: 0,
+            precondition: None,
         }
     }
+}
+
+/// `Goal` represents one of several options that construct an over
+/// all goal in a precondition, condition, problem goal, etc.
+#[derive(Debug, PartialEq)]
+pub enum Goal {
+    Not(Box<Goal>),
+    And(Vec<Goal>),
+    Or(Vec<Goal>),
+    Preference(String, Box<Goal>),
+    Forall(Vec<Param>, Box<Goal>),
+    Exists(Vec<Param>, Box<Goal>),
+    Imply(Box<Goal>, Box<Goal>),
+    Pred(PredId, Vec<Term>),
+    EqualTerms(Term, Term),
+    EqualFexps(Fexp, Fexp),
+    Less(Fexp, Fexp),
+    LessEq(Fexp, Fexp),
+    Greater(Fexp, Fexp),
+    GreaterEq(Fexp, Fexp),
+}
+
+/// `Term` represents one of the values that can be associated with
+/// `Goal::Pred` or within a `Term::Func` itself.  In other words,
+/// it represents the arguments to a predicate or a function.
+#[derive(Debug, PartialEq)]
+pub enum Term {
+    Const(ConstId),
+    Var(Vec<TypeId>),
+    Func(FuncId, Vec<Term>),
+}
+
+impl Term {
+    /// `is_func` returns true if the `Term` matches the `Term::Func` variant.
+    pub fn is_func(&self) -> bool {
+        if let Term::Func(_, _) = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Fexp {
+    Number(f64),
+    Mult(Box<Fexp>, Vec<Fexp>),
+    Add(Box<Fexp>, Vec<Fexp>),
+    Div(Box<Fexp>, Box<Fexp>),
+    Sub(Box<Fexp>, Box<Fexp>),
+    Neg(Box<Fexp>),
+    Func(FuncId, Vec<Term>),
+    FnSymbol(String),
 }

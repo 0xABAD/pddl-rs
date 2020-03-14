@@ -45,6 +45,11 @@ impl Types {
         None
     }
 
+    /// `name_of` returns the type name for of the given `id`.
+    pub fn name_of(&self, id: TypeId) -> &str {
+        &self.types[id]
+    }
+
     /// `insert` inserts `s` and assigns it a `TypeId` if it hasn't already
     /// been seen.
     pub fn insert(&mut self, s: &str) -> TypeId {

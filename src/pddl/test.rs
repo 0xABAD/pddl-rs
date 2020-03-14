@@ -1041,3 +1041,420 @@ fn return_error_for_duplicate_action() {
     }
     panic!("Duplicate action error not detected");
 }
+
+#[test]
+fn can_parse_empty_action_precondition() -> Result<(), Errors> {
+    let d = Domain::parse("(define (domain d) (:action bar :parameters () :precondition ()))")?;
+
+    let bar = &d.actions[0];
+    assert_eq!(bar.id, 0);
+    assert_eq!(bar.name, "bar");
+    assert_eq!(bar.params.len(), 0);
+    assert_eq!(bar.precondition, None);
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_predicate() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:predicates (foo))
+           (:action a
+             :parameters()
+             :precondition (foo)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+    assert_eq!(a.precondition, Some(Goal::Pred(0, vec![])));
+
+    Ok(())
+}
+
+#[test]
+fn precondition_predicate_fails_with_predicate_not_defined() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:predicates (foo))
+           (:action a
+             :parameters()
+             :precondition (fo)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "predicate, fo, not defined");
+            return;
+        }
+    }
+    panic!("predicate not defined error not detected");
+}
+
+#[test]
+fn can_parse_precondition_predicate_with_constant_term() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:constants wood-block metal-block - block)
+           (:predicates (holding ?a - block))
+           (:action a
+             :parameters()
+             :precondition (holding METAL-BLOCK)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+    assert_eq!(a.precondition, Some(Goal::Pred(0, vec![Term::Const(1)])));
+
+    Ok(())
+}
+
+#[test]
+fn precondition_predicate_fails_with_constant_not_defined() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?a - block))
+           (:action a
+             :parameters()
+             :precondition (holding METAL-BLOCK)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "constant, metal-block, not defined");
+            return;
+        }
+    }
+    panic!("constant not defined error not detected");
+}
+
+#[test]
+fn can_parse_precondition_predicate_with_variable_term() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?a - block))
+           (:action a
+             :parameters (?b - block)
+             :precondition (holding ?B)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+    assert_eq!(
+        a.precondition,
+        Some(Goal::Pred(0, vec![Term::Var(vec![1])]))
+    );
+
+    Ok(())
+}
+
+#[test]
+fn precondition_predicate_fails_with_variable_not_defined() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?a - block))
+           (:action a
+             :parameters (?b - block)
+             :precondition (holding ?a)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "variable, ?a, not defined");
+            return;
+        }
+    }
+    panic!("variable not defined error not detected");
+}
+
+#[test]
+fn can_parse_precondition_predicate_with_func_term() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - BLOCK)
+             :precondition (Holding (Transform ?B))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let f = Term::Func(0, vec![Term::Var(vec![1])]);
+    assert_eq!(a.precondition, Some(Goal::Pred(0, vec![f])));
+
+    Ok(())
+}
+
+#[test]
+fn precondition_predicate_fails_with_func_term_not_defined() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - BLOCK)
+             :precondition (Holding (tranform ?B))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "function, tranform, not defined");
+            return;
+        }
+    }
+    panic!("function not defined error not detected");
+}
+
+#[test]
+fn precondition_func_term_fails_with_arg_of_wrong_type() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:functions (transform ?b - (either block sphere)) - sphere)
+           (:action a
+             :parameters (?b - square)
+             :precondition (Holding (transform ?B))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(
+                s,
+                "none of the types for ?B are one of or a subtype of [\"block\", \"sphere\"]"
+            );
+            return;
+        }
+    }
+    panic!("function arg wrong type error not detected");
+}
+
+#[test]
+fn precondition_predicate_fails_with_arg_of_wrong_type() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:action a
+             :parameters (?b - square)
+             :precondition (Holding ?b)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(
+                s,
+                "none of the types for ?b are one of or a subtype of [\"sphere\"]"
+            );
+            return;
+        }
+    }
+    panic!("function arg wrong type error not detected");
+}
+
+#[test]
+fn can_parse_precondition_predicate_with_arg_of_no_type() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips)
+           (:predicates (holding ?a))
+           (:action a
+             :parameters (?b)
+             :precondition (Holding ?b)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+    assert_eq!(a.precondition, Some(Goal::Pred(0, vec![Term::Var(vec![])])));
+
+    Ok(())
+}
+
+#[test]
+fn precondition_predicate_fails_with_arg_of_no_type() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:action a
+             :parameters (?b)
+             :precondition (Holding ?b)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "?b does not implement any type");
+            return;
+        }
+    }
+    panic!("predicate arg of no type error not detected");
+}
+
+#[test]
+fn precondition_predicate_fails_with_typed_arg_but_none_is_required() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?a))
+           (:action a
+             :parameters (?b - sphere)
+             :precondition (Holding ?b)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(
+                s,
+                "?b implements a type but none are allowed for the argument"
+            );
+            return;
+        }
+    }
+    panic!("predicate with typed arg but none required error not detected");
+}
+
+#[test]
+fn can_parse_precondition_func_term_with_arg_of_no_type() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:functions (transform ?b) - sphere)
+           (:action a
+             :parameters (?b)
+             :precondition (Holding (transform ?B))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let f = Term::Func(0, vec![Term::Var(vec![])]);
+    assert_eq!(a.precondition, Some(Goal::Pred(0, vec![f])));
+
+    Ok(())
+}
+
+#[test]
+fn precondition_func_term_fails_with_arg_of_no_type() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b)
+             :precondition (Holding (transform ?b))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "?b does not implement any type");
+            return;
+        }
+    }
+    panic!("func term arg of no type error not detected");
+}
+
+#[test]
+fn precondition_func_term_fails_with_typed_arg_but_none_is_required() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:functions (transform ?b) - sphere)
+           (:action a
+             :parameters (?b - block)
+             :precondition (Holding (transform ?b))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(
+                s,
+                "?b implements a type but none are allowed for the argument"
+            );
+            return;
+        }
+    }
+    panic!("func term with typed arg but none required error not detected");
+}
+
+#[test]
+fn precondition_not_fails_with_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips)
+           (:predicates (holding))
+           (:action a
+             :parameters ()
+             :precondition (NOT (Holding))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::NegativePreconditions);
+            return;
+        }
+    }
+    panic!("Missing negative preconditions requirement error not returned.");
+}
+
+#[test]
+fn can_parse_precondition_less_than() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters ()
+             :precondition (< 1 2)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let f1 = Fexp::Number(1.0);
+    let f2 = Fexp::Number(2.0);
+    assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
+fn precondition_less_than_fails_with_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips)
+           (:action a
+             :parameters ()
+             :precondition (< 1 2)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::NumericFluents);
+            return;
+        }
+    }
+    panic!("Missing numeric fluents requirement error not returned.");
+}
