@@ -67,7 +67,7 @@ impl<'a> Parser<'a> {
         parse.name = domain_name;
 
         loop {
-            if let Ok(_) = self.next_is(TokenType::RParen) {
+            if self.next_is(TokenType::RParen).is_ok() {
                 break;
             }
             if let Err(have) = self.next_is(TokenType::LParen) {
@@ -77,7 +77,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 9 {
                 top_count -= 1;
-                if let Ok(_) = self.keyword_is(":requirements") {
+                if self.keyword_is(":requirements").is_ok() {
                     parse.reqs = self.requirements()?;
                     self.reqs = parse.reqs;
                     continue;
@@ -86,7 +86,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 8 {
                 top_count -= 1;
-                if let Ok(_) = self.keyword_is(":types") {
+                if self.keyword_is(":types").is_ok() {
                     if !self.reqs.has(Requirement::Typing) {
                         return Err(self.missing(Requirement::Typing, ":types"));
                     }
@@ -97,7 +97,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 7 {
                 top_count -= 1;
-                if let Ok(_) = self.keyword_is(":constants") {
+                if self.keyword_is(":constants").is_ok() {
                     parse.const_pos = self.tokpos;
                     self.balance_parens();
                     continue;
@@ -106,7 +106,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 6 {
                 top_count -= 1;
-                if let Ok(_) = self.keyword_is(":predicates") {
+                if self.keyword_is(":predicates").is_ok() {
                     parse.pred_pos = self.tokpos;
                     self.balance_parens();
                     continue;
@@ -115,7 +115,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 5 {
                 top_count -= 1;
-                if let Ok(_) = self.keyword_is(":functions") {
+                if self.keyword_is(":functions").is_ok() {
                     parse.func_pos = self.tokpos;
                     self.balance_parens();
                     continue;
@@ -124,7 +124,7 @@ impl<'a> Parser<'a> {
 
             if top_count == 4 {
                 top_count -= 1;
-                if let Ok(_) = self.keyword_is(":constraints") {
+                if self.keyword_is(":constraints").is_ok() {
                     if !self.reqs.has(Requirement::Constraints) {
                         return Err(self.missing(Requirement::Constraints, ":constraints section"));
                     }
@@ -134,13 +134,13 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            if let Ok(_) = self.keyword_is(":action") {
+            if self.keyword_is(":action").is_ok() {
                 parse.action_pos.push(self.tokpos);
                 self.balance_parens();
                 continue;
             }
 
-            if let Ok(_) = self.keyword_is(":durative-action") {
+            if self.keyword_is(":durative-action").is_ok() {
                 if !self.reqs.has(Requirement::DurativeActions) {
                     return Err(self.missing(Requirement::DurativeActions, ":durative-action"));
                 }
@@ -149,7 +149,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if let Ok(_) = self.keyword_is(":derived") {
+            if self.keyword_is(":derived").is_ok() {
                 if !self.reqs.has(Requirement::DerivedPredicates) {
                     return Err(self.missing(Requirement::DerivedPredicates, ":derived predicate"));
                 }
@@ -340,7 +340,7 @@ impl<'a> Parser<'a> {
         reqs.add(self.parse_requirement(ALL)?);
 
         loop {
-            if let Ok(_) = self.next_is(TokenType::RParen) {
+            if self.next_is(TokenType::RParen).is_ok() {
                 return Ok(reqs);
             }
             reqs.add(self.parse_requirement(ALL)?);
@@ -350,7 +350,7 @@ impl<'a> Parser<'a> {
     /// `parse_requirement` is helper for `requirements`.
     fn parse_requirement(&mut self, all: &[&str]) -> Result<Requirement, Error> {
         for &r in all {
-            if let Ok(_) = self.keyword_is(r) {
+            if self.keyword_is(r).is_ok() {
                 return Ok(to_requirement(r));
             }
         }
@@ -379,7 +379,7 @@ impl<'a> Parser<'a> {
             let mut siblings: Vec<(TypeId, Token)> = vec![];
             let src = self.src;
 
-            if let Ok(_) = self.next_is(TokenType::RParen) {
+            if self.next_is(TokenType::RParen).is_ok() {
                 return Ok(types);
             }
 
@@ -395,7 +395,7 @@ impl<'a> Parser<'a> {
             // Have one type now collect more to get a set of types that
             // inherit from another (:types first second - parent).
             'more_types: loop {
-                if let Ok(_) = self.next_is(TokenType::RParen) {
+                if self.next_is(TokenType::RParen).is_ok() {
                     return Ok(types);
                 } else if let Ok(tok) = self.next_is(TokenType::Ident) {
                     let s = tok.to_str(src);
@@ -403,7 +403,7 @@ impl<'a> Parser<'a> {
                         return Err(self.semantic("object declared as a derived type"));
                     }
                     siblings.push((types.insert(s), *tok));
-                } else if let Ok(_) = self.next_is(TokenType::Minus) {
+                } else if self.next_is(TokenType::Minus).is_ok() {
                     // Reached inherintance, collect single or multiple parent types.
                     self.type_declarations(|t| {
                         let parent_name = t.to_str(src);
@@ -443,7 +443,7 @@ impl<'a> Parser<'a> {
     {
         if let Ok(tok) = self.next_is(TokenType::Ident) {
             on_type(tok)?;
-        } else if let Ok(_) = self.next_is(TokenType::LParen) {
+        } else if self.next_is(TokenType::LParen).is_ok() {
             self.ident("either")?;
 
             // Must have at least one either type.
@@ -452,7 +452,7 @@ impl<'a> Parser<'a> {
 
             // Get the rest of the either parent types.
             loop {
-                if let Ok(_) = self.next_is(TokenType::RParen) {
+                if self.next_is(TokenType::RParen).is_ok() {
                     return Ok(());
                 } else if let Ok(tok) = self.next_is(TokenType::Ident) {
                     on_type(tok)?;
@@ -506,9 +506,9 @@ impl<'a> Parser<'a> {
         pred_id += 1;
 
         loop {
-            if let Ok(_) = self.next_is(TokenType::RParen) {
+            if self.next_is(TokenType::RParen).is_ok() {
                 break;
-            } else if let Err(_) = self.next_is(TokenType::LParen) {
+            } else if self.next_is(TokenType::LParen).is_err() {
                 return Err(self.expect(&[TokenType::LParen, TokenType::RParen]));
             }
 
@@ -563,7 +563,7 @@ impl<'a> Parser<'a> {
         func_id += 1;
 
         loop {
-            if let Ok(_) = self.next_is(TokenType::RParen) {
+            if self.next_is(TokenType::RParen).is_ok() {
                 for &id in &func_ids {
                     funcs[id].returns_number = true;
                 }
@@ -575,7 +575,7 @@ impl<'a> Parser<'a> {
                     return Err(self.missing(Requirement::NumericFluents, "function(s)"));
                 }
                 return Ok(result);
-            } else if let Ok(_) = self.next_is(TokenType::LParen) {
+            } else if self.next_is(TokenType::LParen).is_ok() {
                 parsed_types = false;
 
                 let sig = self.signature()?;
@@ -602,7 +602,7 @@ impl<'a> Parser<'a> {
                     func_ids.push(func_id);
                     func_id += 1;
                 }
-            } else if let Ok(_) = self.next_is(TokenType::Minus) {
+            } else if self.next_is(TokenType::Minus).is_ok() {
                 parsed_types = true;
 
                 if let Some(tok) = self.peek() {
@@ -661,7 +661,7 @@ impl<'a> Parser<'a> {
         let mut var_names: Vec<&str> = vec![];
 
         // Get the first variable if there is one.
-        if let Ok(_) = self.next_is(TokenType::RParen) {
+        if self.next_is(TokenType::RParen).is_ok() {
             return Ok(sig);
         } else if let Ok(tok) = self.next_is(TokenType::Variable) {
             var_names.push(tok.to_str(self.src));
@@ -672,7 +672,7 @@ impl<'a> Parser<'a> {
 
         // Get the rest of the variables and their types if they have some.
         loop {
-            if let Ok(_) = self.next_is(TokenType::RParen) {
+            if self.next_is(TokenType::RParen).is_ok() {
                 return Ok(sig);
             } else if let Ok(tok) = self.next_is(TokenType::Variable) {
                 let name = tok.to_str(self.src);
@@ -684,7 +684,7 @@ impl<'a> Parser<'a> {
                 }
                 var_names.push(name);
                 sig.params.push(Param::default());
-            } else if let Ok(_) = self.next_is(TokenType::Minus) {
+            } else if self.next_is(TokenType::Minus).is_ok() {
                 if !self.reqs.has(Requirement::Typing) {
                     return Err(self.missing(Requirement::Typing, ":types"));
                 }
@@ -738,7 +738,7 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            if let Ok(_) = self.next_is(TokenType::RParen) {
+            if self.next_is(TokenType::RParen).is_ok() {
                 result.constants = consts;
                 return Ok(result);
             } else if let Ok(tok) = self.next_is(TokenType::Ident) {
@@ -755,7 +755,7 @@ impl<'a> Parser<'a> {
                     const_ids.push(const_id);
                     const_id += 1;
                 }
-            } else if let Ok(_) = self.next_is(TokenType::Minus) {
+            } else if self.next_is(TokenType::Minus).is_ok() {
                 if !self.reqs.has(Requirement::Typing) {
                     return Err(self.missing(Requirement::Typing, ":types"));
                 }
