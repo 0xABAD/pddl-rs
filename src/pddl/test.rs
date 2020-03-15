@@ -2262,3 +2262,92 @@ fn can_parse_complex_precondition() -> Result<(), Errors> {
     }
     Ok(())
 }
+
+#[test]
+fn parse_and_parse_seq_produce_same_results() -> Result<(), Errors> {
+    const TEST: &'static str = "(define (domain d)
+           (:requirements :strips :typing :fluents :negative-preconditions)
+           (:types block square sphere)
+           (:constants metal - block)
+           (:predicates
+              (holding ?a - sphere)
+              (table-clear))
+           (:functions
+              (transform ?b - (either block square)) - sphere
+              (weight ?o - (either block square sphere)))
+           (:action a
+             :parameters (?b - block ?s - sphere)
+             :precondition (and
+                (Holding (transform ?b))
+                (= (weight ?b) (+ 6 (* 1 2 3)))
+                (> (weight ?b) (weight ?s))
+                (not (table-clear)))))";
+
+    let d1 = Domain::parse(TEST)?;
+    let d2 = Domain::parse_seq(TEST)?;
+
+    assert_eq!(d1.name, d2.name);
+    assert_eq!(d1.reqs, d2.reqs);
+    assert_eq!(d1.predicates.len(), d2.predicates.len());
+    assert_eq!(d1.functions.len(), d2.functions.len());
+    assert_eq!(d1.constants.len(), d2.constants.len());
+    assert_eq!(d1.actions.len(), d2.actions.len());
+
+    for i in 0..d1.predicates.len() {
+        let p1 = &d1.predicates[i];
+        let p2 = &d2.predicates[i];
+
+        assert_eq!(p1.id, p2.id);
+        assert_eq!(p1.name, p2.name);
+        assert_eq!(p1.params.len(), p2.params.len());
+
+        for j in 0..p1.params.len() {
+            let pp1 = &p1.params[j];
+            let pp2 = &p2.params[j];
+            assert_eq!(pp1.types, pp2.types);
+        }
+    }
+
+    for i in 0..d1.functions.len() {
+        let f1 = &d1.functions[i];
+        let f2 = &d2.functions[i];
+
+        assert_eq!(f1.id, f2.id);
+        assert_eq!(f1.name, f2.name);
+        assert_eq!(f1.params.len(), f2.params.len());
+        assert_eq!(f1.return_types, f2.return_types);
+        assert_eq!(f1.returns_number, f2.returns_number);
+
+        for j in 0..f1.params.len() {
+            let pf1 = &f1.params[j];
+            let pf2 = &f2.params[j];
+            assert_eq!(pf1.types, pf2.types);
+        }
+    }
+
+    for i in 0..d1.constants.len() {
+        let c1 = &d1.constants[i];
+        let c2 = &d2.constants[i];
+        assert_eq!(c1.id, c2.id);
+        assert_eq!(c1.name, c2.name);
+        assert_eq!(c1.types, c2.types);
+    }
+
+    for i in 0..d1.actions.len() {
+        let a1 = &d1.actions[i];
+        let a2 = &d2.actions[i];
+
+        assert_eq!(a1.id, a2.id);
+        assert_eq!(a1.name, a2.name);
+        assert_eq!(a1.params.len(), a2.params.len());
+        assert_eq!(a1.precondition, a2.precondition);
+
+        for j in 0..a1.params.len() {
+            let pa1 = &a1.params[j];
+            let pa2 = &a2.params[j];
+            assert_eq!(pa1.types, pa2.types);
+        }
+    }
+
+    Ok(())
+}

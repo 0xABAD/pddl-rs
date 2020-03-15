@@ -253,6 +253,142 @@ impl Domain {
         Ok(dom)
     }
 
+    /// `parse_seq` is like `parse` but only parses `src` sequentially and
+    /// employs no parallelism.  It is provided mainly for benchmark testing
+    /// of `parse`.
+    pub fn parse_seq(src: &str) -> Result<Self, Errors> {
+        let tokens = scanner::scan(src);
+        let mut top = Parser::new(src, &tokens);
+
+        let top_parse: Parse;
+        match top.domain_top() {
+            Ok(pr) => top_parse = pr,
+            Err(e) => return Err(vec![e]),
+        }
+
+        let mut dom = Domain::default();
+        dom.name = top_parse.name.to_string();
+        dom.reqs = top_parse.reqs;
+        dom.types = top_parse.types;
+
+        let mut errors: Vec<Error> = vec![];
+        let dom_types = &dom.types;
+        let dom_reqs = dom.reqs;
+        let new_parser = |what, pos| {
+            let mut p = Parser::new(src, &tokens);
+
+            p.tokpos = pos;
+            p.reqs = dom_reqs;
+            p.what = what;
+            p.types = Some(dom_types);
+
+            p
+        };
+
+        if top_parse.pred_pos != 0 {
+            let mut p = new_parser(ParsingWhat::Predicates, top_parse.pred_pos);
+            match p.predicates() {
+                Ok(parse) => dom.predicates = parse.predicates,
+                Err(e) => errors.push(e),
+            }
+        }
+        if top_parse.func_pos != 0 {
+            let mut p = new_parser(ParsingWhat::Functions, top_parse.func_pos);
+            match p.functions() {
+                Ok(parse) => dom.functions = parse.functions,
+                Err(e) => errors.push(e),
+            }
+        }
+        if top_parse.const_pos != 0 {
+            let mut p = new_parser(ParsingWhat::Constants, top_parse.const_pos);
+            match p.constants() {
+                Ok(parse) => dom.constants = parse.constants,
+                Err(e) => errors.push(e),
+            }
+        }
+
+        let dom_types = &dom.types;
+        let dom_preds = &dom.predicates;
+        let dom_funcs = &dom.functions;
+        let dom_consts = &dom.constants;
+        let mut pred_map: parser::PredMap = parser::PredMap::new();
+        let mut func_map: parser::FuncMap = parser::FuncMap::new();
+        let mut const_map: parser::ConstMap = parser::ConstMap::new();
+
+        for i in 0..dom.predicates.len() {
+            let p = &dom.predicates[i];
+            if p.id != i {
+                panic!("Predicate ID not equal to its index");
+            }
+            pred_map.insert(p.signature_key(), p.id);
+        }
+
+        for i in 0..dom.functions.len() {
+            let f = &dom.functions[i];
+            if f.id != i {
+                panic!("Function ID not equal to its index");
+            }
+            func_map.insert(f.signature_key(), f.id);
+        }
+
+        for i in 0..dom.constants.len() {
+            let c = &dom.constants[i];
+            if c.id != i {
+                panic!("Constant ID not equal to its index");
+            }
+            const_map.insert(c.name.clone(), c.id);
+        }
+
+        let new_parser = |what, pos| {
+            let mut p = Parser::new(src, &tokens);
+
+            p.tokpos = pos;
+            p.reqs = dom_reqs;
+            p.what = what;
+            p.types = Some(dom_types);
+            p.pred_map = Some(&pred_map);
+            p.predicates = Some(dom_preds);
+            p.func_map = Some(&func_map);
+            p.functions = Some(dom_funcs);
+            p.const_map = Some(&const_map);
+            p.constants = Some(dom_consts);
+
+            p
+        };
+
+        let mut act_id: ActionId = 0;
+        let mut act_names: HashSet<String> = HashSet::new();
+
+        for pos in top_parse.action_pos {
+            let mut p = new_parser(ParsingWhat::Action, pos);
+            match p.action() {
+                Ok(parse) => {
+                    let mut act = parse.action.expect("did not receive a parsed :action");
+
+                    if act_names.contains(&act.name) {
+                        let s = format!("action, {}, is already defined", &act.name);
+                        errors.push(Error {
+                            what: ErrorType::SemanticError(s),
+                            line: act.line,
+                            col: act.col,
+                        });
+                    } else {
+                        act.id = act_id;
+                        act_id += 1;
+                        act_names.insert(act.name.clone());
+                        dom.actions.push(act);
+                    }
+                }
+                Err(e) => errors.push(e),
+            }
+        }
+
+        if errors.len() > 0 {
+            return Err(errors);
+        }
+        Ok(dom)
+    }
+
     /// `has_requirement` returns true if this `Domain` has the requirement of `r`.
     pub fn has_requirement(&self, r: Requirement) -> bool {
         self.reqs.has(r)
