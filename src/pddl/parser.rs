@@ -932,7 +932,7 @@ impl<'a> Parser<'a> {
 
         let name = tok.to_str(self.src);
         if kids.len() == 0 {
-            let s = format!("{} does not implement any type", name);
+            let s = format!("{} does not represent a type", name);
             return Err(Error::semantic(tok.line, tok.col, &s));
         }
         if parents.len() == 0 {
@@ -1206,10 +1206,18 @@ impl<'a> Parser<'a> {
         } else if self.next_is(TokenType::LParen).is_ok() {
             if let Ok(&ident) = self.next_is(TokenType::Ident) {
                 let (id, terms) = self.func_term(&ident, stack)?;
+                let func = &self.functions.unwrap()[id];
+
+                if !func.returns_number {
+                    let f = ident.to_str(self.src);
+                    let s = format!("function, {}, does not return a number", f);
+                    return Err(Error::semantic(ident.line, ident.col, &s));
+                }
                 Ok(Fexp::Func(id, terms))
             } else if self.next_is(TokenType::Mult).is_ok() {
-                let mut args: Vec<Fexp> = vec![];
-                let lexp = self.fexp(stack)?;
+                let first = self.fexp(stack)?;
+                let second = self.fexp(stack)?;
+                let mut args: Vec<Fexp> = vec![second];
 
                 while self.peek_is(TokenType::Ident).is_some()
                     || self.peek_is(TokenType::Number).is_some()
@@ -1219,10 +1227,11 @@ impl<'a> Parser<'a> {
                 }
                 self.consume(TokenType::RParen)?;
 
-                Ok(Fexp::Mult(Box::new(lexp), args))
+                Ok(Fexp::Mult(Box::new(first), args))
             } else if self.next_is(TokenType::Plus).is_ok() {
-                let mut args: Vec<Fexp> = vec![];
-                let lexp = self.fexp(stack)?;
+                let first = self.fexp(stack)?;
+                let second = self.fexp(stack)?;
+                let mut args: Vec<Fexp> = vec![second];
 
                 while self.peek_is(TokenType::Ident).is_some()
                     || self.peek_is(TokenType::Number).is_some()
@@ -1232,7 +1241,7 @@ impl<'a> Parser<'a> {
                 }
                 self.consume(TokenType::RParen)?;
 
-                Ok(Fexp::Add(Box::new(lexp), args))
+                Ok(Fexp::Add(Box::new(first), args))
             } else if self.next_is(TokenType::Div).is_ok() {
                 let f1 = self.fexp(stack)?;
                 let f2 = self.fexp(stack)?;

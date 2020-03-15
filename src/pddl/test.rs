@@ -1169,6 +1169,8 @@ fn precondition_predicate_fails_with_variable_not_defined() {
         if let ErrorType::SemanticError(s) = &e[0].what {
             assert_eq!(s, "variable, ?a, not defined");
             return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
         }
     }
     panic!("variable not defined error not detected");
@@ -1213,6 +1215,8 @@ fn precondition_predicate_fails_with_func_term_not_defined() {
         if let ErrorType::SemanticError(s) = &e[0].what {
             assert_eq!(s, "function, tranform, not defined");
             return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
         }
     }
     panic!("function not defined error not detected");
@@ -1238,6 +1242,8 @@ fn precondition_func_term_fails_with_arg_of_wrong_type() {
                 "none of the types for ?B are one of or a subtype of [\"block\", \"sphere\"]"
             );
             return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
         }
     }
     panic!("function arg wrong type error not detected");
@@ -1262,6 +1268,8 @@ fn precondition_predicate_fails_with_arg_of_wrong_type() {
                 "none of the types for ?b are one of or a subtype of [\"sphere\"]"
             );
             return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
         }
     }
     panic!("function arg wrong type error not detected");
@@ -1299,8 +1307,10 @@ fn precondition_predicate_fails_with_arg_of_no_type() {
 
     if let Err(e) = d {
         if let ErrorType::SemanticError(s) = &e[0].what {
-            assert_eq!(s, "?b does not implement any type");
+            assert_eq!(s, "?b does not represent a type");
             return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
         }
     }
     panic!("predicate arg of no type error not detected");
@@ -1325,6 +1335,8 @@ fn precondition_predicate_fails_with_typed_arg_but_none_is_required() {
                 "?b implements a type but none are allowed for the argument"
             );
             return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
         }
     }
     panic!("predicate with typed arg but none required error not detected");
@@ -1367,8 +1379,10 @@ fn precondition_func_term_fails_with_arg_of_no_type() {
 
     if let Err(e) = d {
         if let ErrorType::SemanticError(s) = &e[0].what {
-            assert_eq!(s, "?b does not implement any type");
+            assert_eq!(s, "?b does not represent a type");
             return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
         }
     }
     panic!("func term arg of no type error not detected");
@@ -1394,9 +1408,35 @@ fn precondition_func_term_fails_with_typed_arg_but_none_is_required() {
                 "?b implements a type but none are allowed for the argument"
             );
             return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
         }
     }
     panic!("func term with typed arg but none required error not detected");
+}
+
+#[test]
+fn precondition_func_term_fails_when_it_does_not_return_a_type() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents :numeric-fluents)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:functions (transform ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :precondition (Holding (transform ?b))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "transform does not represent a type");
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("func term not returning a type error not detected");
 }
 
 #[test]
@@ -1414,6 +1454,8 @@ fn precondition_not_fails_with_missing_requirement() {
         if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
             assert_eq!(req, Requirement::NegativePreconditions);
             return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
         }
     }
     panic!("Missing negative preconditions requirement error not returned.");
@@ -1453,7 +1495,331 @@ fn precondition_less_than_fails_with_missing_requirement() {
         if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
             assert_eq!(req, Requirement::NumericFluents);
             return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
         }
     }
     panic!("Missing numeric fluents requirement error not returned.");
+}
+
+#[test]
+fn precondition_fexp_returns_fn_symbol() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters ()
+             :precondition (< foo bar)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let f1 = Fexp::FnSymbol("foo".to_string());
+    let f2 = Fexp::FnSymbol("bar".to_string());
+    assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
+fn precondition_fexp_func_term_fails_when_not_returning_number() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents :numeric-fluents)
+           (:functions (foo) - object (bar ?a))
+           (:action a
+             :parameters (?a)
+             :precondition (< (foo) (bar ?a))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "function, foo, does not return a number");
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("fexp function term not returning a number error not detected");
+}
+
+#[test]
+fn precondition_fexp_returns_func_expr() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:functions (foo) (bar ?a))
+           (:action a
+             :parameters (?a)
+             :precondition (< (foo) (bar ?a))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let f1 = Fexp::Func(0, vec![]);
+    let f2 = Fexp::Func(1, vec![Term::Var(vec![])]);
+    assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
+fn precondition_fexp_returns_mult() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters (?a)
+             :precondition (< (* 1 2) (* 1 2 3))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let n1 = Fexp::Number(1.0);
+    let n2 = Fexp::Number(2.0);
+
+    let m1 = Fexp::Number(1.0);
+    let m2 = Fexp::Number(2.0);
+    let m3 = Fexp::Number(3.0);
+
+    let f1 = Fexp::Mult(Box::new(n1), vec![n2]);
+    let f2 = Fexp::Mult(Box::new(m1), vec![m2, m3]);
+    assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
+fn fexp_mult_fails_with_not_enough_args() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters (?a)
+             :precondition (< (* 1) (* 1 2 3))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::Expect {
+            have: h,
+            expect: ex,
+        } = &e[0].what
+        {
+            assert_eq!(h, ")");
+            assert_eq!(*ex, ["number", "identifier", "("]);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("too few mult args err not detected");
+}
+
+#[test]
+fn precondition_fexp_returns_add() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters (?a)
+             :precondition (< (+ 1 foo) (+ 1 2 bar))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let n1 = Fexp::Number(1.0);
+    let n2 = Fexp::FnSymbol("foo".to_string());
+
+    let m1 = Fexp::Number(1.0);
+    let m2 = Fexp::Number(2.0);
+    let m3 = Fexp::FnSymbol("bar".to_string());
+
+    let f1 = Fexp::Add(Box::new(n1), vec![n2]);
+    let f2 = Fexp::Add(Box::new(m1), vec![m2, m3]);
+    assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
+fn fexp_add_fails_with_not_enough_args() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters (?a)
+             :precondition (< (+ 1) (+ 1 2 bar))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::Expect {
+            have: h,
+            expect: ex,
+        } = &e[0].what
+        {
+            assert_eq!(h, ")");
+            assert_eq!(*ex, ["number", "identifier", "("]);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("too few add args err not detected");
+}
+
+#[test]
+fn precondition_fexp_returns_div() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters (?a)
+             :precondition (< (/ 1 foo) (/ 1 bar))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let n1 = Fexp::Number(1.0);
+    let n2 = Fexp::FnSymbol("foo".to_string());
+
+    let m1 = Fexp::Number(1.0);
+    let m2 = Fexp::FnSymbol("bar".to_string());
+
+    let f1 = Fexp::Div(Box::new(n1), Box::new(n2));
+    let f2 = Fexp::Div(Box::new(m1), Box::new(m2));
+    assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
+fn fexp_div_fails_with_not_enough_args() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters (?a)
+             :precondition (< (/ 1) (/ 1 2))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::Expect {
+            have: h,
+            expect: ex,
+        } = &e[0].what
+        {
+            assert_eq!(h, ")");
+            assert_eq!(*ex, ["number", "identifier", "("]);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("too few div args err not detected");
+}
+
+#[test]
+fn fexp_div_fails_with_too_many_args() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters (?a)
+             :precondition (< (/ 1 2 3) (/ 1 2))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::Expect {
+            have: h,
+            expect: ex,
+        } = &e[0].what
+        {
+            assert_eq!(h, "3");
+            assert_eq!(*ex, [")"]);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("too many div args err not detected");
+}
+
+#[test]
+fn precondition_fexp_returns_sub() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters (?a)
+             :precondition (< (- 1 foo) (- 1 bar))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let n1 = Fexp::Number(1.0);
+    let n2 = Fexp::FnSymbol("foo".to_string());
+
+    let m1 = Fexp::Number(1.0);
+    let m2 = Fexp::FnSymbol("bar".to_string());
+
+    let f1 = Fexp::Sub(Box::new(n1), Box::new(n2));
+    let f2 = Fexp::Sub(Box::new(m1), Box::new(m2));
+    assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
+fn fexp_sub_fails_with_too_many_args() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters (?a)
+             :precondition (< (- 1 2 3) (- 1 2))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::Expect {
+            have: h,
+            expect: ex,
+        } = &e[0].what
+        {
+            assert_eq!(h, "3");
+            assert_eq!(*ex, [")"]);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("too many sub args err not detected");
+}
+
+#[test]
+fn precondition_fexp_returns_neg() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters (?a)
+             :precondition (< (- 1) (- 2))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let n1 = Fexp::Number(1.0);
+    let m1 = Fexp::Number(2.0);
+
+    let f1 = Fexp::Neg(Box::new(n1));
+    let f2 = Fexp::Neg(Box::new(m1));
+    assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
+
+    Ok(())
 }
