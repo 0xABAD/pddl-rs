@@ -1482,6 +1482,66 @@ fn can_parse_precondition_less_than() -> Result<(), Errors> {
 }
 
 #[test]
+fn can_parse_precondition_less_eq_than() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters ()
+             :precondition (<= 1 2)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let f1 = Fexp::Number(1.0);
+    let f2 = Fexp::Number(2.0);
+    assert_eq!(a.precondition, Some(Goal::LessEq(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_greater_than() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters ()
+             :precondition (> 1 2)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let f1 = Fexp::Number(1.0);
+    let f2 = Fexp::Number(2.0);
+    assert_eq!(a.precondition, Some(Goal::Greater(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_greater_eq_than() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:action a
+             :parameters ()
+             :precondition (>= 1 2)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let f1 = Fexp::Number(1.0);
+    let f2 = Fexp::Number(2.0);
+    assert_eq!(a.precondition, Some(Goal::GreaterEq(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
 fn precondition_less_than_fails_with_missing_requirement() {
     let d = Domain::parse(
         "(define (domain d)

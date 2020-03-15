@@ -1112,7 +1112,20 @@ impl<'a> Parser<'a> {
             Ok(Goal::Pred(id, terms))
         } else if self.next_is(TokenType::Less).is_ok() {
             self.check_requirement(Requirement::NumericFluents, "<")?;
+
             Ok(Goal::Less(self.fexp(stack)?, self.fexp(stack)?))
+        } else if self.next_is(TokenType::LessEq).is_ok() {
+            self.check_requirement(Requirement::NumericFluents, "<=")?;
+
+            Ok(Goal::LessEq(self.fexp(stack)?, self.fexp(stack)?))
+        } else if self.next_is(TokenType::Greater).is_ok() {
+            self.check_requirement(Requirement::NumericFluents, ">")?;
+
+            Ok(Goal::Greater(self.fexp(stack)?, self.fexp(stack)?))
+        } else if self.next_is(TokenType::GreaterEq).is_ok() {
+            self.check_requirement(Requirement::NumericFluents, ">=")?;
+
+            Ok(Goal::GreaterEq(self.fexp(stack)?, self.fexp(stack)?))
         } else {
             Err(self.expect_str(&[
                 "and",
@@ -1123,6 +1136,9 @@ impl<'a> Parser<'a> {
                 "not",
                 "identifier",
                 "<",
+                "<=",
+                ">",
+                ">="
             ]))
         }
     }
