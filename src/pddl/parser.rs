@@ -1692,6 +1692,18 @@ mod test {
     use super::*;
     use crate::pddl::scanner::{self, TokenType};
 
+    macro_rules! param {
+        ($($arg:tt)*) => {
+            {
+                Param {
+                    types: vec![$($arg)*],
+                    start: 0,
+                    end: 0,
+                }
+            }
+        }
+    }
+
     #[test]
     fn iterates() {
         const TEST: &'static str = "(define (domain foo))";
@@ -2127,12 +2139,10 @@ mod test {
 
         parser.reqs.add(Requirement::UniversalPreconditions);
         let goal = parser.pre_goal(&mut stack)?;
-        let p1 = Param {
-            types: vec![],
-            start: 9,
-            end: 11,
-        };
-        assert_eq!(goal, Goal::Forall(vec![p1], Box::new(Goal::And(vec![]))));
+        assert_eq!(
+            goal,
+            Goal::Forall(vec![param![]], Box::new(Goal::And(vec![])))
+        );
 
         Ok(())
     }
@@ -2164,11 +2174,7 @@ mod test {
 
         parser.reqs.add(Requirement::ExistentialPreconditions);
         let goal = parser.pre_goal(&mut stack)?;
-        let p1 = Param {
-            types: vec![],
-            start: 9,
-            end: 11,
-        };
+        let p1 = param![];
         assert_eq!(goal, Goal::Exists(vec![p1], Box::new(Goal::And(vec![]))));
 
         Ok(())
@@ -2212,11 +2218,7 @@ mod test {
 
         parser.reqs.add(Requirement::UniversalPreconditions);
         let goal = parser.goal(&mut stack)?;
-        let p1 = Param {
-            types: vec![],
-            start: 9,
-            end: 11,
-        };
+        let p1 = param![];
         assert_eq!(goal, Goal::Forall(vec![p1], Box::new(Goal::And(vec![]))));
 
         Ok(())
@@ -2249,11 +2251,7 @@ mod test {
 
         parser.reqs.add(Requirement::ExistentialPreconditions);
         let goal = parser.goal(&mut stack)?;
-        let p1 = Param {
-            types: vec![],
-            start: 9,
-            end: 11,
-        };
+        let p1 = param![];
         assert_eq!(goal, Goal::Exists(vec![p1], Box::new(Goal::And(vec![]))));
 
         Ok(())

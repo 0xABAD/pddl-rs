@@ -455,7 +455,7 @@ impl Function {
 /// definition, or within an :action or :durative-action).  The
 /// parameter maintains its list of immediate `TypeId`s, that the
 /// parameter may be.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Param {
     pub types: Vec<TypeId>,
 
@@ -474,6 +474,12 @@ impl Default for Param {
             start: 0,
             end: 0,
         }
+    }
+}
+
+impl std::cmp::PartialEq for Param {
+    fn eq(&self, other: &Self) -> bool {
+        self.types.eq(&other.types)
     }
 }
 

@@ -2299,13 +2299,7 @@ fn parse_and_parse_seq_produce_same_results() -> Result<(), Errors> {
 
         assert_eq!(p1.id, p2.id);
         assert_eq!(p1.name, p2.name);
-        assert_eq!(p1.params.len(), p2.params.len());
-
-        for j in 0..p1.params.len() {
-            let pp1 = &p1.params[j];
-            let pp2 = &p2.params[j];
-            assert_eq!(pp1.types, pp2.types);
-        }
+        assert_eq!(p1.params, p2.params);
     }
 
     for i in 0..d1.functions.len() {
@@ -2314,15 +2308,9 @@ fn parse_and_parse_seq_produce_same_results() -> Result<(), Errors> {
 
         assert_eq!(f1.id, f2.id);
         assert_eq!(f1.name, f2.name);
-        assert_eq!(f1.params.len(), f2.params.len());
+        assert_eq!(f1.params, f2.params);
         assert_eq!(f1.return_types, f2.return_types);
         assert_eq!(f1.returns_number, f2.returns_number);
-
-        for j in 0..f1.params.len() {
-            let pf1 = &f1.params[j];
-            let pf2 = &f2.params[j];
-            assert_eq!(pf1.types, pf2.types);
-        }
     }
 
     for i in 0..d1.constants.len() {
@@ -2339,7 +2327,7 @@ fn parse_and_parse_seq_produce_same_results() -> Result<(), Errors> {
 
         assert_eq!(a1.id, a2.id);
         assert_eq!(a1.name, a2.name);
-        assert_eq!(a1.params.len(), a2.params.len());
+        assert_eq!(a1.params, a2.params);
         assert_eq!(a1.precondition, a2.precondition);
 
         for j in 0..a1.params.len() {
