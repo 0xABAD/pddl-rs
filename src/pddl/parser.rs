@@ -1088,6 +1088,7 @@ impl<'a> Parser<'a> {
             } else {
                 self.check_requirement(Requirement::DisjunctivePreconditions, "not goal")?;
             }
+            self.consume(TokenType::RParen)?;
             Ok(Goal::Not(Box::new(g)))
         } else if let Ok(&ident) = self.next_is(TokenType::Ident) {
             let mut terms: Vec<Term> = vec![];
@@ -1113,19 +1114,35 @@ impl<'a> Parser<'a> {
         } else if self.next_is(TokenType::Less).is_ok() {
             self.check_requirement(Requirement::NumericFluents, "<")?;
 
-            Ok(Goal::Less(self.fexp(stack)?, self.fexp(stack)?))
+            let f1 = self.fexp(stack)?;
+            let f2 = self.fexp(stack)?;
+            self.consume(TokenType::RParen)?;
+
+            Ok(Goal::Less(f1, f2))
         } else if self.next_is(TokenType::LessEq).is_ok() {
             self.check_requirement(Requirement::NumericFluents, "<=")?;
 
-            Ok(Goal::LessEq(self.fexp(stack)?, self.fexp(stack)?))
+            let f1 = self.fexp(stack)?;
+            let f2 = self.fexp(stack)?;
+            self.consume(TokenType::RParen)?;
+
+            Ok(Goal::LessEq(f1, f2))
         } else if self.next_is(TokenType::Greater).is_ok() {
             self.check_requirement(Requirement::NumericFluents, ">")?;
 
-            Ok(Goal::Greater(self.fexp(stack)?, self.fexp(stack)?))
+            let f1 = self.fexp(stack)?;
+            let f2 = self.fexp(stack)?;
+            self.consume(TokenType::RParen)?;
+
+            Ok(Goal::Greater(f1, f2))
         } else if self.next_is(TokenType::GreaterEq).is_ok() {
             self.check_requirement(Requirement::NumericFluents, ">=")?;
 
-            Ok(Goal::GreaterEq(self.fexp(stack)?, self.fexp(stack)?))
+            let f1 = self.fexp(stack)?;
+            let f2 = self.fexp(stack)?;
+            self.consume(TokenType::RParen)?;
+
+            Ok(Goal::GreaterEq(f1, f2))
         } else if self.next_is(TokenType::Equal).is_ok() {
             // Save the current token position in order to back track
             // if either the left or right term fails to parse.
@@ -1135,6 +1152,7 @@ impl<'a> Parser<'a> {
 
             if lterm.is_ok() && rterm.is_ok() {
                 self.check_requirement(Requirement::Equality, "=")?;
+                self.consume(TokenType::RParen)?;
                 Ok(Goal::EqualTerms(lterm.unwrap().what, rterm.unwrap().what))
             } else {
                 self.tokpos = start;
@@ -1144,6 +1162,7 @@ impl<'a> Parser<'a> {
 
                 if lexp.is_ok() && rexp.is_ok() {
                     self.check_requirement(Requirement::NumericFluents, "=")?;
+                    self.consume(TokenType::RParen)?;
                     Ok(Goal::EqualFexps(lexp.unwrap(), rexp.unwrap()))
                 } else if lterm.is_err() && lexp.is_ok() && rexp.is_err() {
                     // Left could be a function symbol or a function term

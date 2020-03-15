@@ -2228,3 +2228,37 @@ fn equality_fails_with_missing_numeric_fluents_requirement() {
     }
     panic!("missing numeric fluents requirement error not detected");
 }
+
+#[test]
+fn can_parse_complex_precondition() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :equality :fluents :negative-preconditions)
+           (:types block square sphere)
+           (:constants metal wood - block)
+           (:predicates (table-clear))
+           (:functions
+              (weight ?o - (either block square sphere)))
+           (:action a
+             :parameters (?b - block ?s - sphere ?q - square)
+             :precondition (and
+                (= metal wood)
+                (= (weight ?b) (+ 6 (* 1 2 3)))
+                (> (weight ?b) (weight ?q))
+                (>= (weight ?b) (weight wood))
+                (< (weight ?b) (weight ?s))
+                (<= (weight ?b) (weight metal))
+                (not (table-clear)))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+    assert!(a.precondition.is_some());
+
+    let pre = a.precondition.as_ref().unwrap();
+    match pre {
+        Goal::And(v) => assert_eq!(v.len(), 7),
+        _ => panic!("goal is not an 'and'"),
+    }
+    Ok(())
+}
