@@ -1127,6 +1127,8 @@ impl<'a> Parser<'a> {
 
             Ok(Goal::GreaterEq(self.fexp(stack)?, self.fexp(stack)?))
         } else if self.next_is(TokenType::Equal).is_ok() {
+            // Save the current token position in order to back track
+            // if either the left or right term fails to parse.
             let start = self.tokpos;
             let lterm = self.term(stack);
             let rterm = self.term(stack);
@@ -1273,9 +1275,7 @@ impl<'a> Parser<'a> {
                 }
                 Ok(Fexp::Func(id, terms))
             } else if self.next_is(TokenType::Mult).is_ok() {
-                let first = self.fexp(stack)?;
-                let second = self.fexp(stack)?;
-                let mut args: Vec<Fexp> = vec![second];
+                let mut args: Vec<Fexp> = vec![self.fexp(stack)?, self.fexp(stack)?];
 
                 while self.peek_is(TokenType::Ident).is_some()
                     || self.peek_is(TokenType::Number).is_some()
@@ -1285,11 +1285,9 @@ impl<'a> Parser<'a> {
                 }
                 self.consume(TokenType::RParen)?;
 
-                Ok(Fexp::Mult(Box::new(first), args))
+                Ok(Fexp::Mult(args))
             } else if self.next_is(TokenType::Plus).is_ok() {
-                let first = self.fexp(stack)?;
-                let second = self.fexp(stack)?;
-                let mut args: Vec<Fexp> = vec![second];
+                let mut args: Vec<Fexp> = vec![self.fexp(stack)?, self.fexp(stack)?];
 
                 while self.peek_is(TokenType::Ident).is_some()
                     || self.peek_is(TokenType::Number).is_some()
@@ -1299,7 +1297,7 @@ impl<'a> Parser<'a> {
                 }
                 self.consume(TokenType::RParen)?;
 
-                Ok(Fexp::Add(Box::new(first), args))
+                Ok(Fexp::Add(args))
             } else if self.next_is(TokenType::Div).is_ok() {
                 let f1 = self.fexp(stack)?;
                 let f2 = self.fexp(stack)?;

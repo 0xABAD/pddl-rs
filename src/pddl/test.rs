@@ -1645,8 +1645,8 @@ fn precondition_fexp_returns_mult() -> Result<(), Errors> {
     let m2 = Fexp::Number(2.0);
     let m3 = Fexp::Number(3.0);
 
-    let f1 = Fexp::Mult(Box::new(n1), vec![n2]);
-    let f2 = Fexp::Mult(Box::new(m1), vec![m2, m3]);
+    let f1 = Fexp::Mult(vec![n1, n2]);
+    let f2 = Fexp::Mult(vec![m1, m2, m3]);
     assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
 
     Ok(())
@@ -1698,8 +1698,8 @@ fn precondition_fexp_returns_add() -> Result<(), Errors> {
     let m2 = Fexp::Number(2.0);
     let m3 = Fexp::FnSymbol("bar".to_string());
 
-    let f1 = Fexp::Add(Box::new(n1), vec![n2]);
-    let f2 = Fexp::Add(Box::new(m1), vec![m2, m3]);
+    let f1 = Fexp::Add(vec![n1, n2]);
+    let f2 = Fexp::Add(vec![m1, m2, m3]);
     assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
 
     Ok(())
@@ -2093,8 +2093,8 @@ fn can_parse_precondition_equality_with_op_fexp() -> Result<(), Errors> {
     let m2 = Fexp::Number(2.0);
     let m3 = Fexp::Number(3.0);
 
-    let f1 = Fexp::Mult(Box::new(n2), vec![n3]);
-    let f2 = Fexp::Add(Box::new(m1), vec![m2, m3]);
+    let f1 = Fexp::Mult(vec![n2, n3]);
+    let f2 = Fexp::Add(vec![m1, m2, m3]);
 
     assert_eq!(a.precondition, Some(Goal::EqualFexps(f1, f2)));
 

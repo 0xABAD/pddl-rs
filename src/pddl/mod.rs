@@ -427,8 +427,8 @@ impl Term {
 #[derive(Debug, PartialEq)]
 pub enum Fexp {
     Number(f64),
-    Mult(Box<Fexp>, Vec<Fexp>),
-    Add(Box<Fexp>, Vec<Fexp>),
+    Mult(Vec<Fexp>),
+    Add(Vec<Fexp>),
     Div(Box<Fexp>, Box<Fexp>),
     Sub(Box<Fexp>, Box<Fexp>),
     Neg(Box<Fexp>),
