@@ -4,7 +4,8 @@ use super::{
     reqs::{Reqs, Requirement},
     scanner::{Token, TokenType},
     types::{TypeId, Types},
-    Action, ConstId, Constant, Fexp, FuncId, Function, Goal, Param, PredId, Predicate, Term,
+    Action, ConstId, Constant, Effect, Fexp, Fhead, FuncId, Function, Goal, Param, PredId,
+    Predicate, Term,
 };
 
 pub type PredMap = HashMap<String, PredId>;
@@ -881,7 +882,16 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let have_eff = false;
+        let mut have_eff = false;
+        if self.keyword_is(":effect").is_ok() {
+            if !self.is_empty_construct() {
+                action.effect = Some(self.effect(&mut stack)?);
+                have_eff = true;
+            } else {
+                self.consume(TokenType::LParen)?;
+                self.consume(TokenType::RParen)?;
+            }
+        }
 
         if self.next_is(TokenType::RParen).is_err() {
             let mut v: Vec<&str> = vec![];
@@ -1091,25 +1101,7 @@ impl<'a> Parser<'a> {
             self.consume(TokenType::RParen)?;
             Ok(Goal::Not(Box::new(g)))
         } else if let Ok(&ident) = self.next_is(TokenType::Ident) {
-            let mut terms: Vec<Term> = vec![];
-            let mut tokens: Vec<Token> = vec![];
-
-            while !self.peek_is(TokenType::RParen).is_some() {
-                let t = self.term(stack)?;
-                terms.push(t.what);
-                tokens.push(t.info);
-            }
-
-            let pred = self.get_pred(&ident, terms.len())?;
-            let id = pred.id;
-
-            for i in 0..terms.len() {
-                let ttypes = self.term_types(&terms[i]);
-                let ftypes = &pred.params[i].types;
-                self.check_types(&tokens[i], ttypes, ftypes)?;
-            }
-            self.consume(TokenType::RParen)?;
-
+            let (id, terms) = self.pred_form(&ident, stack)?;
             Ok(Goal::Pred(id, terms))
         } else if self.next_is(TokenType::Less).is_ok() {
             self.check_requirement(Requirement::NumericFluents, "<")?;
@@ -1278,9 +1270,22 @@ impl<'a> Parser<'a> {
     fn fexp(&mut self, stack: &mut ParamStack) -> Result<Fexp, Error> {
         if let Ok(tok) = self.next_is(TokenType::Ident) {
             let sym = tok.to_str(self.src).to_ascii_lowercase();
+            // We don't check the number fluents requirement for function
+            // symbols as `fexp` is shared between parsing pre-conditions
+            // and effects, and there is ambiguity when parsing the `=`
+            // operator.  In this case, the symbol could be a constant or
+            // a function symbol.
+            //
+            // Note that `=` operator for goals will check for numeric
+            // fluents if both left and right hand sides are fexps.  For
+            // effects, function symbols are allowed with fhead parsing
+            // and numeric fluents will be checked there.
+            //
+            // Parsing PDDL is such a bitch.
             Ok(Fexp::FnSymbol(sym))
         } else if let Ok(tok) = self.next_is(TokenType::Number) {
             let num = tok.to_str(self.src).parse().unwrap();
+            self.check_requirement(Requirement::NumericFluents, "number")?;
             Ok(Fexp::Number(num))
         } else if self.next_is(TokenType::LParen).is_ok() {
             if let Ok(&ident) = self.next_is(TokenType::Ident) {
@@ -1294,6 +1299,8 @@ impl<'a> Parser<'a> {
                 }
                 Ok(Fexp::Func(id, terms))
             } else if self.next_is(TokenType::Mult).is_ok() {
+                self.check_requirement(Requirement::NumericFluents, "*")?;
+
                 let mut args: Vec<Fexp> = vec![self.fexp(stack)?, self.fexp(stack)?];
 
                 while self.peek_is(TokenType::Ident).is_some()
@@ -1306,6 +1313,8 @@ impl<'a> Parser<'a> {
 
                 Ok(Fexp::Mult(args))
             } else if self.next_is(TokenType::Plus).is_ok() {
+                self.check_requirement(Requirement::NumericFluents, "+")?;
+
                 let mut args: Vec<Fexp> = vec![self.fexp(stack)?, self.fexp(stack)?];
 
                 while self.peek_is(TokenType::Ident).is_some()
@@ -1318,6 +1327,8 @@ impl<'a> Parser<'a> {
 
                 Ok(Fexp::Add(args))
             } else if self.next_is(TokenType::Div).is_ok() {
+                self.check_requirement(Requirement::NumericFluents, "/")?;
+
                 let f1 = self.fexp(stack)?;
                 let f2 = self.fexp(stack)?;
 
@@ -1325,6 +1336,8 @@ impl<'a> Parser<'a> {
 
                 Ok(Fexp::Div(Box::new(f1), Box::new(f2)))
             } else if self.next_is(TokenType::Minus).is_ok() {
+                self.check_requirement(Requirement::NumericFluents, "-")?;
+
                 let f1 = self.fexp(stack)?;
 
                 if self.peek_is(TokenType::RParen).is_some() {
@@ -1425,6 +1438,331 @@ impl<'a> Parser<'a> {
                 let f = &s[*id];
                 &f.return_types
             }
+        }
+    }
+
+    /// `pred_form` parses the predicate that is part an expression.
+    /// It expects the predicate name has already been parsed which is
+    /// passed as `ident`.
+    fn pred_form(
+        &mut self,
+        ident: &Token,
+        stack: &mut ParamStack,
+    ) -> Result<(PredId, Vec<Term>), Error> {
+        let mut terms: Vec<Term> = vec![];
+        let mut tokens: Vec<Token> = vec![];
+
+        while !self.peek_is(TokenType::RParen).is_some() {
+            let t = self.term(stack)?;
+            terms.push(t.what);
+            tokens.push(t.info);
+        }
+
+        let pred = self.get_pred(&ident, terms.len())?;
+        let id = pred.id;
+
+        for i in 0..terms.len() {
+            let ttypes = self.term_types(&terms[i]);
+            let ftypes = &pred.params[i].types;
+            self.check_types(&tokens[i], ttypes, ftypes)?;
+        }
+        self.consume(TokenType::RParen)?;
+
+        Ok((id, terms))
+    }
+
+    fn fhead(&mut self, stack: &mut ParamStack) -> Result<Fhead, Error> {
+        if let Ok(tok) = self.next_is(TokenType::Ident) {
+            let sym = tok.to_str(self.src).to_ascii_lowercase();
+
+            self.check_requirement(Requirement::NumericFluents, "function symbol")?;
+            Ok(Fhead::FnSymbol(sym))
+        } else if self.next_is(TokenType::LParen).is_ok() {
+            let &ident = self.consume(TokenType::Ident)?;
+
+            self.check_requirement(Requirement::NumericFluents, "function term")?;
+
+            let (id, terms) = self.func_term(&ident, stack)?;
+            let func = &self.functions.unwrap()[id];
+
+            if !func.returns_number {
+                let f = ident.to_str(self.src);
+                let s = format!("function, {}, does not return a number", f);
+                return Err(Error::semantic(ident.line, ident.col, &s));
+            }
+            Ok(Fhead::Func(id, terms))
+        } else {
+            Err(self.expect_str(&["identifier", "("]))
+        }
+    }
+
+    /// `effect` parses the top level effect of an :action.
+    fn effect(&mut self, stack: &mut ParamStack) -> Result<Effect, Error> {
+        let start = self.tokpos;
+
+        self.consume(TokenType::LParen)?;
+
+        if self.ident_is("and").is_ok() {
+            let mut effects: Vec<Effect> = vec![];
+            while self.peek_is(TokenType::LParen).is_some() {
+                effects.push(self.c_effect(stack)?);
+            }
+            self.consume(TokenType::RParen)?;
+            Ok(Effect::And(effects))
+        } else if self.ident_is("forall").is_ok()
+            || self.ident_is("when").is_ok()
+            || self.ident_is("not").is_ok()
+            || self.ident_is("assign").is_ok()
+            || self.ident_is("scale-up").is_ok()
+            || self.ident_is("scale-down").is_ok()
+            || self.ident_is("increase").is_ok()
+            || self.ident_is("decrease").is_ok()
+            || self.next_is(TokenType::Equal).is_ok()
+            || self.next_is(TokenType::Ident).is_ok()
+        {
+            self.tokpos = start;
+            self.c_effect(stack)
+        } else {
+            Err(self.expect_str(&[
+                "and",
+                "forall",
+                "when",
+                "not",
+                "assign",
+                "scale-up",
+                "scale-down",
+                "increase",
+                "decrease",
+                "=",
+                "identifier",
+            ]))
+        }
+    }
+
+    /// `c_effect` parses the conditional effect that can be part of `effect`.
+    fn c_effect(&mut self, stack: &mut ParamStack) -> Result<Effect, Error> {
+        let start = self.tokpos;
+
+        self.consume(TokenType::LParen)?;
+
+        if self.ident_is("forall").is_ok() {
+            self.check_requirement(Requirement::ConditionalEffects, "forall")?;
+
+            stack.push(self.typed_list_variable()?);
+
+            let e = self.effect(stack)?;
+            let p = stack.pop().unwrap();
+            self.consume(TokenType::RParen)?;
+
+            Ok(Effect::Forall(p, Box::new(e)))
+        } else if self.ident_is("when").is_ok() {
+            self.check_requirement(Requirement::ConditionalEffects, "when")?;
+
+            let g = self.goal(stack)?;
+            let e = self.cond_effect(stack)?;
+            self.consume(TokenType::RParen)?;
+
+            Ok(Effect::When(g, Box::new(e)))
+        } else if self.ident_is("not").is_ok()
+            || self.ident_is("assign").is_ok()
+            || self.ident_is("scale-up").is_ok()
+            || self.ident_is("scale-down").is_ok()
+            || self.ident_is("increase").is_ok()
+            || self.ident_is("decrease").is_ok()
+            || self.next_is(TokenType::Equal).is_ok()
+            || self.next_is(TokenType::Ident).is_ok()
+        {
+            self.tokpos = start;
+            self.p_effect(stack)
+        } else {
+            Err(self.expect_str(&[
+                "forall",
+                "when",
+                "not",
+                "assign",
+                "scale-up",
+                "scale-down",
+                "increase",
+                "decrease",
+                "=",
+                "identifier",
+            ]))
+        }
+    }
+
+    /// `cond_effect` is sub conditional effect that can be an `Effect::And` whose
+    /// inner effects can be zero or more `p_effect`s or a `p_effect` itself.
+    fn cond_effect(&mut self, stack: &mut ParamStack) -> Result<Effect, Error> {
+        let start = self.tokpos;
+
+        self.consume(TokenType::LParen)?;
+
+        if self.ident_is("and").is_ok() {
+            let mut effects: Vec<Effect> = vec![];
+            while self.peek_is(TokenType::LParen).is_some() {
+                effects.push(self.p_effect(stack)?);
+            }
+            self.consume(TokenType::RParen)?;
+            Ok(Effect::And(effects))
+        } else if self.ident_is("not").is_ok()
+            || self.ident_is("assign").is_ok()
+            || self.ident_is("scale-up").is_ok()
+            || self.ident_is("scale-down").is_ok()
+            || self.ident_is("increase").is_ok()
+            || self.ident_is("decrease").is_ok()
+            || self.next_is(TokenType::Equal).is_ok()
+            || self.next_is(TokenType::Ident).is_ok()
+        {
+            self.tokpos = start;
+            self.p_effect(stack)
+        } else {
+            Err(self.expect_str(&[
+                "and",
+                "not",
+                "assign",
+                "scale-up",
+                "scale-down",
+                "increase",
+                "decrease",
+                "=",
+                "identifier",
+            ]))
+        }
+    }
+
+    /// `p_effect` parses the post effect that can occur after any condtional
+    /// effects or at the top level of the effect.
+    fn p_effect(&mut self, stack: &mut ParamStack) -> Result<Effect, Error> {
+        let start = self.tokpos;
+
+        self.consume(TokenType::LParen)?;
+
+        if self.ident_is("not").is_ok() {
+            let aterm = self.atomic_form_term_effect(stack)?;
+            self.consume(TokenType::RParen)?;
+            Ok(Effect::Not(Box::new(aterm)))
+        } else if self.ident_is("assign").is_ok() {
+            let after_assign = self.tokpos;
+
+            self.tokpos = start;
+            let assign = self.assign_op(stack);
+
+            if assign.is_ok() {
+                assign
+            } else {
+                self.tokpos = after_assign;
+
+                let is_left_err = self.consume(TokenType::LParen).is_err();
+                let tok = self.consume(TokenType::Ident);
+
+                if is_left_err || tok.is_err() {
+                    return Err(assign.err().unwrap());
+                }
+
+                let &ident = tok.unwrap();
+                let result = self.func_term(&ident, stack);
+
+                if result.is_err() {
+                    return Err(assign.err().unwrap());
+                }
+
+                let (id, terms) = result.unwrap();
+                self.check_requirement(Requirement::ObjectFluents, "assign")?;
+
+                if self.ident_is("undefined").is_ok() {
+                    self.consume(TokenType::RParen)?;
+                    Ok(Effect::AssignUndef(id, terms))
+                } else if self.peek_is(TokenType::Ident).is_some()
+                    || self.peek_is(TokenType::Variable).is_some()
+                    || self.peek_is(TokenType::LParen).is_some()
+                {
+                    let info = self.term(stack)?;
+                    self.consume(TokenType::RParen)?;
+                    Ok(Effect::AssignTerm(id, terms, info.what))
+                } else {
+                    Err(self.expect_str(&["undefined", "identifier", "variable", "("]))
+                }
+            }
+        } else if self.ident_is("scale-up").is_ok()
+            || self.ident_is("scale-down").is_ok()
+            || self.ident_is("increase").is_ok()
+            || self.ident_is("decrease").is_ok()
+        {
+            self.tokpos = start;
+            self.assign_op(stack)
+        } else if self.next_is(TokenType::Equal).is_ok() || self.next_is(TokenType::Ident).is_ok() {
+            self.tokpos = start;
+            self.atomic_form_term_effect(stack)
+        } else {
+            Err(self.expect_str(&[
+                "not",
+                "assign",
+                "scale-up",
+                "scale-down",
+                "increase",
+                "decrease",
+                "=",
+                "identifier",
+            ]))
+        }
+    }
+
+    fn assign_op(&mut self, stack: &mut ParamStack) -> Result<Effect, Error> {
+        self.consume(TokenType::LParen)?;
+
+        if self.ident_is("assign").is_ok() {
+            self.check_requirement(Requirement::NumericFluents, "assign")?;
+            let head = self.fhead(stack)?;
+            let exp = self.fexp(stack)?;
+            self.consume(TokenType::RParen)?;
+            Ok(Effect::AssignFexp(head, exp))
+        } else if self.ident_is("scale-up").is_ok() {
+            self.check_requirement(Requirement::NumericFluents, "scale-up")?;
+            let head = self.fhead(stack)?;
+            let exp = self.fexp(stack)?;
+            self.consume(TokenType::RParen)?;
+            Ok(Effect::ScaleUp(head, exp))
+        } else if self.ident_is("scale-down").is_ok() {
+            self.check_requirement(Requirement::NumericFluents, "scale-down")?;
+            let head = self.fhead(stack)?;
+            let exp = self.fexp(stack)?;
+            self.consume(TokenType::RParen)?;
+            Ok(Effect::ScaleDown(head, exp))
+        } else if self.ident_is("increase").is_ok() {
+            self.check_requirement(Requirement::NumericFluents, "increase")?;
+            let head = self.fhead(stack)?;
+            let exp = self.fexp(stack)?;
+            self.consume(TokenType::RParen)?;
+            Ok(Effect::Increase(head, exp))
+        } else if self.ident_is("decrease").is_ok() {
+            self.check_requirement(Requirement::NumericFluents, "decrease")?;
+            let head = self.fhead(stack)?;
+            let exp = self.fexp(stack)?;
+            self.consume(TokenType::RParen)?;
+            Ok(Effect::Decrease(head, exp))
+        } else {
+            Err(self.expect_str(&["assign", "scale-up", "scale-down", "increase", "decrease"]))
+        }
+    }
+
+    /// `atomic_form_term_effect` parses the effect that can result in an
+    /// equality check of terms or call to a predicate.
+    fn atomic_form_term_effect(&mut self, stack: &mut ParamStack) -> Result<Effect, Error> {
+        self.consume(TokenType::LParen)?;
+
+        if self.next_is(TokenType::Equal).is_ok() {
+            self.check_requirement(Requirement::Equality, "=")?;
+
+            let lterm = self.term(stack)?;
+            let rterm = self.term(stack)?;
+
+            self.consume(TokenType::RParen)?;
+            Ok(Effect::Equal(lterm.what, rterm.what))
+        } else if let Ok(&ident) = self.next_is(TokenType::Ident) {
+            let (id, terms) = self.pred_form(&ident, stack)?;
+            Ok(Effect::Pred(id, terms))
+        } else {
+            Err(self.expect_str(&["=", "identifier"]))
         }
     }
 }
@@ -2387,8 +2725,104 @@ mod test {
             if let ErrorType::MissingRequirement { req, what: _ } = e.what {
                 assert_eq!(req, Requirement::DisjunctivePreconditions);
                 return;
+            } else {
+                panic!("WRONG ERROR: {:?}", e);
             }
         }
         panic!("Missing disjunctive preconditions requirement error not returned.");
+    }
+
+    #[test]
+    fn top_and_effect() -> Result<(), Error> {
+        const TEST: &'static str = "(and (forall (?b ?s) (and)) (when (and) (and)))))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let mut stack = ParamStack::new();
+
+        parser.reqs.add(Requirement::ConditionalEffects);
+
+        let e1 = Effect::Forall(vec![param![], param![]], Box::new(Effect::And(vec![])));
+        let e2 = Effect::When(Goal::And(vec![]), Box::new(Effect::And(vec![])));
+        let e = parser.effect(&mut stack)?;
+
+        assert_eq!(e, Effect::And(vec![e1, e2]));
+
+        Ok(())
+    }
+
+    #[test]
+    fn top_forall_effect() -> Result<(), Error> {
+        const TEST: &'static str = "(forall (?s) (and))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let mut stack = ParamStack::new();
+
+        parser.reqs.add(Requirement::ConditionalEffects);
+
+        let and = Box::new(Effect::And(vec![]));
+        let e = parser.effect(&mut stack)?;
+
+        assert_eq!(e, Effect::Forall(vec![param![]], and));
+
+        Ok(())
+    }
+
+    #[test]
+    fn top_forall_effect_fails_with_missing_requirement() {
+        const TEST: &'static str = "(forall (?s) (and))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let mut stack = ParamStack::new();
+
+        if let Err(e) = parser.effect(&mut stack) {
+            if let ErrorType::MissingRequirement { req, what: _ } = e.what {
+                assert_eq!(req, Requirement::ConditionalEffects);
+                return;
+            } else {
+                panic!("WRONG ERROR: {:?}", e);
+            }
+        }
+        panic!("Missing conditional effects requirement error not returned.");
+    }
+
+    #[test]
+    fn top_when_effect() -> Result<(), Error> {
+        const TEST: &'static str = "(when (and) (and))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let mut stack = ParamStack::new();
+
+        parser.reqs.add(Requirement::ConditionalEffects);
+
+        let g_and = Goal::And(vec![]);
+        let e_and = Box::new(Effect::And(vec![]));
+        let e = parser.effect(&mut stack)?;
+
+        assert_eq!(e, Effect::When(g_and, e_and));
+
+        Ok(())
+    }
+
+    #[test]
+    fn top_when_effect_fails_with_missing_requirement() {
+        const TEST: &'static str = "(when (and) (and))";
+
+        let tokens = scanner::scan(TEST);
+        let mut parser = Parser::new(TEST, &tokens);
+        let mut stack = ParamStack::new();
+
+        if let Err(e) = parser.effect(&mut stack) {
+            if let ErrorType::MissingRequirement { req, what: _ } = e.what {
+                assert_eq!(req, Requirement::ConditionalEffects);
+                return;
+            } else {
+                panic!("WRONG ERROR: {:?}", e);
+            }
+        }
+        panic!("Missing conditional effects requirement error not returned.");
     }
 }

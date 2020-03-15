@@ -2266,7 +2266,7 @@ fn can_parse_complex_precondition() -> Result<(), Errors> {
 #[test]
 fn parse_and_parse_seq_produce_same_results() -> Result<(), Errors> {
     const TEST: &'static str = "(define (domain d)
-           (:requirements :strips :typing :fluents :negative-preconditions)
+           (:requirements :strips :typing :fluents :negative-preconditions :conditional-effects)
            (:types block square sphere)
            (:constants metal - block)
            (:predicates
@@ -2275,13 +2275,21 @@ fn parse_and_parse_seq_produce_same_results() -> Result<(), Errors> {
            (:functions
               (transform ?b - (either block square)) - sphere
               (weight ?o - (either block square sphere)))
-           (:action a
+           (:action complex
              :parameters (?b - block ?s - sphere)
              :precondition (and
                 (Holding (transform ?b))
                 (= (weight ?b) (+ 6 (* 1 2 3)))
                 (> (weight ?b) (weight ?s))
-                (not (table-clear)))))";
+                (not (table-clear)))
+             :effect (and
+                (forall (?b - block ?s - sphere)
+                   (when (holding ?s)
+                     (and (assign (transform ?b) ?s)
+                          (assign some-symbol (* 1 2 3)))))
+                (scale-down (weight ?b) (+ 2 3 (/ 1 2)))
+                (table-clear)
+                (not (holding ?s)))))";
 
     let d1 = Domain::parse(TEST)?;
     let d2 = Domain::parse_seq(TEST)?;
@@ -2329,13 +2337,579 @@ fn parse_and_parse_seq_produce_same_results() -> Result<(), Errors> {
         assert_eq!(a1.name, a2.name);
         assert_eq!(a1.params, a2.params);
         assert_eq!(a1.precondition, a2.precondition);
-
-        for j in 0..a1.params.len() {
-            let pa1 = &a1.params[j];
-            let pa2 = &a2.params[j];
-            assert_eq!(pa1.types, pa2.types);
-        }
+        assert_eq!(a1.effect, a2.effect);
     }
 
     Ok(())
+}
+
+#[test]
+fn can_parse_top_predicate_effect() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:constants metal wood - block)
+           (:predicates (holding ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (holding ?b)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+    assert_eq!(a.effect, Some(Effect::Pred(0, vec![Term::Var(vec![1])])));
+
+    Ok(())
+}
+
+#[test]
+fn top_predicate_effect_fails_with_predicate_not_defined() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:constants metal wood - block)
+           (:predicates (holding ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (holdin ?b)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "predicate, holdin, not defined");
+            return;
+        }
+    }
+    panic!("predicate not defined error not detected");
+}
+
+#[test]
+fn can_parse_top_predicate_effect_with_constant_term() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:constants wood-block metal-block - block)
+           (:predicates (holding ?a - block))
+           (:action a
+             :parameters()
+             :effect (holding METAL-BLOCK)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+    assert_eq!(a.effect, Some(Effect::Pred(0, vec![Term::Const(1)])));
+
+    Ok(())
+}
+
+#[test]
+fn top_predicate_effect_fails_with_constant_not_defined() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?a - block))
+           (:action a
+             :parameters()
+             :effect (holding METAL-BLOCK)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "constant, metal-block, not defined");
+            return;
+        }
+    }
+    panic!("constant not defined error not detected");
+}
+
+#[test]
+fn can_parse_top_predicate_effect_with_variable_term() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?a - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (holding ?B)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+    assert_eq!(a.effect, Some(Effect::Pred(0, vec![Term::Var(vec![1])])));
+    Ok(())
+}
+
+#[test]
+fn top_predicate_effect_fails_with_variable_not_defined() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?a - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (holding ?a)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "variable, ?a, not defined");
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("variable not defined error not detected");
+}
+
+#[test]
+fn can_parse_top_predicate_effect_with_func_term() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - BLOCK)
+             :effect (Holding (Transform ?B))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let f = Term::Func(0, vec![Term::Var(vec![1])]);
+    assert_eq!(a.effect, Some(Effect::Pred(0, vec![f])));
+
+    Ok(())
+}
+
+#[test]
+fn top_predicate_effect_fails_with_func_term_not_defined() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:predicates (holding ?a - sphere))
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - BLOCK)
+             :effect (Holding (tranform ?B))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::SemanticError(s) = &e[0].what {
+            assert_eq!(s, "function, tranform, not defined");
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("function not defined error not detected");
+}
+
+#[test]
+fn can_parse_top_equal_effect() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents :equality)
+           (:types block square sphere)
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - BLOCK ?s - sphere)
+             :effect (= (transform ?b) ?s)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let f = Term::Func(0, vec![Term::Var(vec![1])]);
+    let v = Term::Var(vec![3]);
+
+    assert_eq!(a.effect, Some(Effect::Equal(f, v)));
+
+    Ok(())
+}
+
+#[test]
+fn top_equal_effect_fails_with_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - BLOCK ?s - sphere)
+             :effect (= (transform ?b) ?s)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::Equality);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("equality missing requirement error not detected");
+}
+
+#[test]
+fn can_parse_top_not_predicate_effect() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (NOT (holding ?b))))",
+    )?;
+
+    let a = &d.actions[0];
+    let p = Box::new(Effect::Pred(0, vec![Term::Var(vec![1])]));
+
+    assert_eq!(a.id, 0);
+    assert_eq!(a.effect, Some(Effect::Not(p)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_top_not_equal_effect() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :equality :object-fluents)
+           (:types block square sphere)
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - block ?s - sphere)
+             :effect (NOT (= (transform ?b) ?s))))",
+    )?;
+
+    let a = &d.actions[0];
+    let f = Term::Func(0, vec![Term::Var(vec![1])]);
+    let e = Box::new(Effect::Equal(f, Term::Var(vec![3])));
+
+    assert_eq!(a.id, 0);
+    assert_eq!(a.effect, Some(Effect::Not(e)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_when_cond_p_effect() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :conditional-effects)
+           (:types block square sphere)
+           (:predicates (holding ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (when (holding ?b) (not (holding ?b)))))",
+    )?;
+
+    let a = &d.actions[0];
+    let g = Goal::Pred(0, vec![Term::Var(vec![1])]);
+    let p = Effect::Pred(0, vec![Term::Var(vec![1])]);
+    let n = Box::new(Effect::Not(Box::new(p)));
+
+    assert_eq!(a.id, 0);
+    assert_eq!(a.effect, Some(Effect::When(g, n)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_when_cond_p_effect_and() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :conditional-effects)
+           (:types block square sphere)
+           (:predicates (holding ?b - block)
+                        (table-empty))
+           (:action a
+             :parameters (?b - block)
+             :effect (when (holding ?b)
+                       (and (not (holding ?b))
+                            (table-empty)))))",
+    )?;
+
+    let a = &d.actions[0];
+    let g = Goal::Pred(0, vec![Term::Var(vec![1])]);
+    let p = Effect::Pred(0, vec![Term::Var(vec![1])]);
+    let n = Effect::Not(Box::new(p));
+    let t = Effect::Pred(1, vec![]);
+    let and = Box::new(Effect::And(vec![n, t]));
+
+    assert_eq!(a.id, 0);
+    assert_eq!(a.effect, Some(Effect::When(g, and)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_numeric_p_effects() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :numeric-fluents)
+           (:types block square sphere)
+           (:predicates (holding ?b - block)
+                        (table-empty))
+           (:functions (weight ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (and
+               (assign sym1 3)
+               (scale-up (weight ?b) sym2)
+               (scale-down sym2 (weight ?b))
+               (increase (weight ?b) 1)
+               (decrease sym1 (/ 2 4)))))",
+    )?;
+
+    let a = &d.actions[0];
+
+    let n1 = Fexp::Number(1.0);
+    let n2 = Fexp::Number(2.0);
+    let n3 = Fexp::Number(3.0);
+    let n4 = Fexp::Number(4.0);
+
+    let s2 = Fexp::FnSymbol("sym2".to_string());
+    let fw = Fexp::Func(0, vec![Term::Var(vec![1])]);
+    let dv = Fexp::Div(Box::new(n2), Box::new(n4));
+
+    let p1 = Effect::AssignFexp(Fhead::FnSymbol("sym1".to_string()), n3);
+    let p2 = Effect::ScaleUp(Fhead::Func(0, vec![Term::Var(vec![1])]), s2);
+    let p3 = Effect::ScaleDown(Fhead::FnSymbol("sym2".to_string()), fw);
+    let p4 = Effect::Increase(Fhead::Func(0, vec![Term::Var(vec![1])]), n1);
+    let p5 = Effect::Decrease(Fhead::FnSymbol("sym1".to_string()), dv);
+
+    assert_eq!(a.id, 0);
+    assert_eq!(a.effect, Some(Effect::And(vec![p1, p2, p3, p4, p5])));
+
+    Ok(())
+}
+
+#[test]
+fn numeric_p_effect_assign_fails_with_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?b - block)
+                        (table-empty))
+           (:functions (weight ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (assign sym1 3)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::NumericFluents);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("assign missing requirement error not detected");
+}
+
+#[test]
+fn numeric_p_effect_scale_up_fails_with_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?b - block)
+                        (table-empty))
+           (:functions (weight ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (scale-up sym1 3)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::NumericFluents);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("scale up missing requirement error not detected");
+}
+
+#[test]
+fn numeric_p_effect_scale_down_fails_with_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?b - block)
+                        (table-empty))
+           (:functions (weight ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (scale-down sym1 3)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::NumericFluents);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("scale down missing requirement error not detected");
+}
+
+#[test]
+fn numeric_p_effect_increase_fails_with_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?b - block)
+                        (table-empty))
+           (:functions (weight ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (increase sym1 3)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::NumericFluents);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("increase missing requirement error not detected");
+}
+
+#[test]
+fn numeric_p_effect_decrease_fails_with_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:predicates (holding ?b - block)
+                        (table-empty))
+           (:functions (weight ?b - block))
+           (:action a
+             :parameters (?b - block)
+             :effect (decrease sym1 3)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::NumericFluents);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("decrease missing requirement error not detected");
+}
+
+#[test]
+fn can_parse_assign_term() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:constants clay - sphere)
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - block)
+             :effect (assign (transform ?b) clay)))",
+    )?;
+
+    let a = &d.actions[0];
+
+    let t1 = vec![Term::Var(vec![1])];
+    let tc = Term::Const(0);
+
+    assert_eq!(a.id, 0);
+    assert_eq!(a.effect, Some(Effect::AssignTerm(0, t1, tc)));
+
+    Ok(())
+}
+
+#[test]
+fn assign_term_fails_with_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:constants clay - sphere)
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - block)
+             :effect (assign (transform ?b) clay)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::ObjectFluents);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("assign missing requirement error not detected");
+}
+
+#[test]
+fn can_parse_assign_undefined() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :object-fluents)
+           (:types block square sphere)
+           (:constants clay - sphere)
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - block)
+             :effect (assign (transform ?b) undefined)))",
+    )?;
+
+    let a = &d.actions[0];
+
+    let t1 = vec![Term::Var(vec![1])];
+
+    assert_eq!(a.id, 0);
+    assert_eq!(a.effect, Some(Effect::AssignUndef(0, t1)));
+
+    Ok(())
+}
+
+#[test]
+fn assign_undefined_fails_with_missing_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:functions (transform ?b - block) - sphere)
+           (:action a
+             :parameters (?b - block)
+             :effect (assign (transform ?b) undefined)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::ObjectFluents);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("assign missing requirement error not detected");
 }

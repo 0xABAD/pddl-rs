@@ -507,6 +507,8 @@ pub struct Action {
     pub params: Vec<Param>,
     /// Possible precondition of the action.
     pub precondition: Option<Goal>,
+    /// Possible effect of the action.
+    pub effect: Option<Effect>,
 
     line: usize, // Line number where the action is defined.
     col: usize,  // Column number where the action is defined.
@@ -521,6 +523,7 @@ impl Action {
             line: 0,
             col: 0,
             precondition: None,
+            effect: None,
         }
     }
 }
@@ -576,4 +579,27 @@ pub enum Fexp {
     Neg(Box<Fexp>),
     Func(FuncId, Vec<Term>),
     FnSymbol(String),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Fhead {
+    FnSymbol(String),
+    Func(FuncId, Vec<Term>),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Effect {
+    And(Vec<Effect>),
+    Forall(Vec<Param>, Box<Effect>),
+    When(Goal, Box<Effect>),
+    Pred(PredId, Vec<Term>),
+    Equal(Term, Term),
+    Not(Box<Effect>),
+    AssignUndef(FuncId, Vec<Term>),
+    AssignTerm(FuncId, Vec<Term>, Term),
+    AssignFexp(Fhead, Fexp),
+    ScaleUp(Fhead, Fexp),
+    ScaleDown(Fhead, Fexp),
+    Increase(Fhead, Fexp),
+    Decrease(Fhead, Fexp),
 }
