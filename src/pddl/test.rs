@@ -334,8 +334,7 @@ fn can_parse_types() -> Result<(), Errors> {
 fn has_default_object() -> Result<(), Errors> {
     let d = Domain::parse(
         "(define (domain foo)
-           (:requirements :strips :typing)
-           (:types))",
+           (:requirements :strips :typing))",
     )?;
     assert_eq!(d.type_id("object"), Some(0));
     Ok(())

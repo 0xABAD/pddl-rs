@@ -96,6 +96,11 @@ impl<'a> Parser<'a> {
                 if self.keyword_is(":requirements").is_ok() {
                     parse.reqs = self.requirements()?;
                     self.reqs = parse.reqs;
+
+                    if self.reqs.has(Requirement::Typing) {
+                        parse.types = Types::default();
+                        parse.types.insert("object");
+                    }
                     continue;
                 }
             }
