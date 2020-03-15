@@ -1126,6 +1126,47 @@ impl<'a> Parser<'a> {
             self.check_requirement(Requirement::NumericFluents, ">=")?;
 
             Ok(Goal::GreaterEq(self.fexp(stack)?, self.fexp(stack)?))
+        } else if self.next_is(TokenType::Equal).is_ok() {
+            let start = self.tokpos;
+            let lterm = self.term(stack);
+            let rterm = self.term(stack);
+
+            if lterm.is_ok() && rterm.is_ok() {
+                self.check_requirement(Requirement::Equality, "=")?;
+                Ok(Goal::EqualTerms(lterm.unwrap().what, rterm.unwrap().what))
+            } else {
+                self.tokpos = start;
+
+                let lexp = self.fexp(stack);
+                let rexp = self.fexp(stack);
+
+                if lexp.is_ok() && rexp.is_ok() {
+                    self.check_requirement(Requirement::NumericFluents, "=")?;
+                    Ok(Goal::EqualFexps(lexp.unwrap(), rexp.unwrap()))
+                } else if lterm.is_err() && lexp.is_ok() && rexp.is_err() {
+                    // Left could be a function symbol or a function term
+                    // that only returns a number so lterm would be an error
+                    // (i.e. not a constant or the func term doesn't return a
+                    // typed ,object) but lexp would be okay.  So in this case
+                    // rexp is the real error.
+                    Err(rexp.err().unwrap())
+                } else if lterm.is_err() && rterm.is_err() && lexp.is_err() && rexp.is_ok() {
+                    // If there is valid right fexp but all other terms
+                    // and the left fexp are bad then we assume we are parsing
+                    // and equality of fexp's and report the left fexp error.
+                    Err(lexp.err().unwrap())
+                } else if lterm.is_err() {
+                    Err(lterm.err().unwrap())
+                } else if rterm.is_err() {
+                    Err(rterm.err().unwrap())
+                } else if lexp.is_err() {
+                    Err(lexp.err().unwrap())
+                } else if rexp.is_err() {
+                    Err(rexp.err().unwrap())
+                } else {
+                    panic!("ERROR: '=' term and fexp logic isn't correct for all cases");
+                }
+            }
         } else {
             Err(self.expect_str(&[
                 "and",
@@ -1138,7 +1179,8 @@ impl<'a> Parser<'a> {
                 "<",
                 "<=",
                 ">",
-                ">="
+                ">=",
+                "=",
             ]))
         }
     }
@@ -1306,6 +1348,13 @@ impl<'a> Parser<'a> {
         } else if self.next_is(TokenType::LParen).is_ok() {
             let &ident = self.consume(TokenType::Ident)?;
             let (id, terms) = self.func_term(&ident, stack)?;
+            let func = &self.functions.unwrap()[id];
+
+            if func.return_types.len() == 0 {
+                let f = ident.to_str(self.src);
+                let s = format!("function, {}, does not return a type", f);
+                return Err(Error::semantic(ident.line, ident.col, &s));
+            }
             Ok(TermInfo {
                 what: Term::Func(id, terms),
                 info: ident,

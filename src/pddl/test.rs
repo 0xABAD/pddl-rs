@@ -1430,7 +1430,7 @@ fn precondition_func_term_fails_when_it_does_not_return_a_type() {
 
     if let Err(e) = d {
         if let ErrorType::SemanticError(s) = &e[0].what {
-            assert_eq!(s, "transform does not represent a type");
+            assert_eq!(s, "function, transform, does not return a type");
             return;
         } else {
             panic!("WRONG ERROR: {:?}", e);
@@ -1882,4 +1882,349 @@ fn precondition_fexp_returns_neg() -> Result<(), Errors> {
     assert_eq!(a.precondition, Some(Goal::Less(f1, f2)));
 
     Ok(())
+}
+
+#[test]
+fn can_parse_precondition_equality_with_constants() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :equality)
+           (:types block square sphere)
+           (:constants metal - block wood - square)
+           (:action a
+             :parameters (?b - BLOCK)
+             :precondition (= metal wood)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let t0 = Term::Const(0);
+    let t1 = Term::Const(1);
+
+    assert_eq!(a.precondition, Some(Goal::EqualTerms(t0, t1)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_equality_with_variables() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :equality)
+           (:types block square sphere)
+           (:action a
+             :parameters (?b - BLOCK ?m)
+             :precondition (= ?b ?m)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let t0 = Term::Var(vec![1]);
+    let t1 = Term::Var(vec![]);
+
+    assert_eq!(a.precondition, Some(Goal::EqualTerms(t0, t1)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_equality_with_func_terms() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :equality :object-fluents)
+           (:types block square sphere)
+           (:functions
+              (foo) - object
+              (bar) - block)
+           (:action a
+             :parameters ()
+             :precondition (= (foo) (bar))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let t0 = Term::Func(0, vec![]);
+    let t1 = Term::Func(1, vec![]);
+
+    assert_eq!(a.precondition, Some(Goal::EqualTerms(t0, t1)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_equality_with_mixed_terms() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :equality :object-fluents)
+           (:types block square sphere)
+           (:constants metal - block)
+           (:functions
+              (foo) - object
+              (bar) - block)
+           (:action a
+             :parameters ()
+             :precondition (= metal (bar))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let t0 = Term::Const(0);
+    let t1 = Term::Func(1, vec![]);
+
+    assert_eq!(a.precondition, Some(Goal::EqualTerms(t0, t1)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_equality_with_mixed_terms_2() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :equality :object-fluents)
+           (:types block square sphere)
+           (:functions
+              (foo) - object
+              (bar) - block)
+           (:action a
+             :parameters (?b)
+             :precondition (= (foo) ?b)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let t0 = Term::Func(0, vec![]);
+    let t1 = Term::Var(vec![]);
+
+    assert_eq!(a.precondition, Some(Goal::EqualTerms(t0, t1)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_equality_with_func_fexps() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :equality :fluents)
+           (:types block square sphere)
+           (:functions (foo) (bar))
+           (:action a
+             :parameters ()
+             :precondition (= (foo) (bar))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let t0 = Fexp::Func(0, vec![]);
+    let t1 = Fexp::Func(1, vec![]);
+
+    assert_eq!(a.precondition, Some(Goal::EqualFexps(t0, t1)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_equality_with_fn_symbol() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:action a
+             :parameters ()
+             :precondition (= baz quux)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let t0 = Fexp::FnSymbol("baz".to_string());
+    let t1 = Fexp::FnSymbol("quux".to_string());
+
+    assert_eq!(a.precondition, Some(Goal::EqualFexps(t0, t1)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_equality_with_numbers() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:action a
+             :parameters ()
+             :precondition (= 1.2 2.0)))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let t0 = Fexp::Number(1.2);
+    let t1 = Fexp::Number(2.0);
+
+    assert_eq!(a.precondition, Some(Goal::EqualFexps(t0, t1)));
+
+    Ok(())
+}
+
+#[test]
+fn can_parse_precondition_equality_with_op_fexp() -> Result<(), Errors> {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:action a
+             :parameters ()
+             :precondition (= (* 2 3) (+ 1 2 3))))",
+    )?;
+
+    let a = &d.actions[0];
+    assert_eq!(a.id, 0);
+
+    let n2 = Fexp::Number(2.0);
+    let n3 = Fexp::Number(3.0);
+
+    let m1 = Fexp::Number(1.0);
+    let m2 = Fexp::Number(2.0);
+    let m3 = Fexp::Number(3.0);
+
+    let f1 = Fexp::Mult(Box::new(n2), vec![n3]);
+    let f2 = Fexp::Add(Box::new(m1), vec![m2, m3]);
+
+    assert_eq!(a.precondition, Some(Goal::EqualFexps(f1, f2)));
+
+    Ok(())
+}
+
+#[test]
+fn equality_fails_with_bad_right_fexp() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:functions (foo))
+           (:action a
+             :parameters ()
+             :precondition (= (foo) %)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::Expect {
+            have: h,
+            expect: ex,
+        } = &e[0].what
+        {
+            assert_eq!(h, "%");
+            assert_eq!(*ex, ["number", "identifier", "("]);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("right fexp error not detected");
+}
+
+#[test]
+fn equality_fails_with_bad_left_exp() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:functions (foo) - object)
+           (:action a
+             :parameters ()
+             :precondition (= % 3)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::Expect {
+            have: h,
+            expect: ex,
+        } = &e[0].what
+        {
+            assert_eq!(h, "%");
+            assert_eq!(*ex, ["number", "identifier", "("]);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("left fexp error not detected");
+}
+
+#[test]
+fn equality_fails_with_bad_right_term() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:functions (foo) - object)
+           (:action a
+             :parameters ()
+             :precondition (= (foo) 3)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::Expect {
+            have: h,
+            expect: ex,
+        } = &e[0].what
+        {
+            assert_eq!(h, "3");
+            assert_eq!(*ex, ["identifier", "variable", "("]);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("right fexp error not detected");
+}
+
+#[test]
+fn equality_fails_with_missing_equality_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing :fluents)
+           (:types block square sphere)
+           (:action a
+             :parameters (?a ?b)
+             :precondition (= ?a ?b)))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::Equality);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("missing equality requirement error not detected");
+}
+
+#[test]
+fn equality_fails_with_missing_numeric_fluents_requirement() {
+    let d = Domain::parse(
+        "(define (domain d)
+           (:requirements :strips :typing)
+           (:types block square sphere)
+           (:action a
+             :parameters ()
+             :precondition (= foo (* 2 3 4))))",
+    );
+
+    if let Err(e) = d {
+        if let ErrorType::MissingRequirement { req, what: _ } = e[0].what {
+            assert_eq!(req, Requirement::NumericFluents);
+            return;
+        } else {
+            panic!("WRONG ERROR: {:?}", e);
+        }
+    }
+    panic!("missing numeric fluents requirement error not detected");
 }
