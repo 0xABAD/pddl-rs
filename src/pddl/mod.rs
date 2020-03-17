@@ -3,6 +3,10 @@ pub mod types;
 
 mod parser;
 mod reqs;
+
+#[cfg(test)]
+mod problem_test;
+
 #[cfg(test)]
 mod test;
 
@@ -52,8 +56,8 @@ impl Default for Domain {
 }
 
 impl Domain {
-    /// `is_domain` return true if `contents` represents a PDDL domain.
-    /// Only the first few tokens of `cotents` is paresed to make this
+    /// `is_domain` return true if `src` represents a PDDL domain.
+    /// Only the first few tokens of `src` is paresed to make this
     /// determination.
     pub fn is_domain(src: &str) -> bool {
         let mut lex = Scanner::new(src);
@@ -602,4 +606,62 @@ pub enum Effect {
     ScaleDown(Fhead, Fexp),
     Increase(Fhead, Fexp),
     Decrease(Fhead, Fexp),
+}
+
+pub struct Problem {
+    pub name: String,
+    pub domain: String,
+}
+
+impl Default for Problem {
+    fn default() -> Self {
+        Problem {
+            name: "".to_string(),
+            domain: "".to_string(),
+        }
+    }
+}
+
+impl Problem {
+    /// `is_problem` return true if `src` represents a PDDL problem.
+    /// Only the first few tokens of `src` is paresed to make this
+    /// determination.
+    pub fn is_problem(src: &str) -> bool {
+        let mut lex = Scanner::new(src);
+
+        let is_ident = |t: &Token, ident| {
+            t.what == TokenType::Ident && t.to_str(src).eq_ignore_ascii_case(ident)
+        };
+
+        lex.next()
+            .filter(|t| t.what == TokenType::LParen)
+            .and_then(|_| lex.next())
+            .filter(|t| is_ident(t, "define"))
+            .and_then(|_| lex.next())
+            .filter(|t| t.what == TokenType::LParen)
+            .and_then(|_| lex.next())
+            .filter(|t| is_ident(t, "problem"))
+            .is_some()
+    }
+
+    /// `parse` returns a complete problem represented by the PDDL domain
+    /// within `src.`  Returns one or many `Error`s if any syntax or semantic
+    /// error are encountered.
+    pub fn parse(src: &str) -> Result<Self, Errors> {
+        let tokens = scanner::scan(src);
+        let mut top = Parser::new(src, &tokens);
+
+        let top_parse: Parse;
+        match top.problem_top() {
+            Ok(pr) => top_parse = pr,
+            Err(e) => return Err(vec![e]),
+        }
+
+        let mut prob = Problem::default();
+
+        prob.name = top_parse.problem.to_string();
+        prob.domain = top_parse.name.to_string();
+
+        Ok(prob)
+    }
 }

@@ -195,6 +195,25 @@ impl<'a> Parser<'a> {
         Ok(parse)
     }
 
+    pub fn problem_top(&mut self) -> Result<Parse, Error> {
+        self.consume(TokenType::LParen)?;
+        self.ident("define")?;
+        self.consume(TokenType::LParen)?;
+        self.ident("problem")?;
+
+        let mut parse = Parse::default();
+
+        parse.problem = self.consume(TokenType::Ident)?.to_str(self.src);
+        self.consume(TokenType::RParen)?;
+        self.consume(TokenType::LParen)?;
+        self.keyword(":domain")?;
+
+        parse.name = self.consume(TokenType::Ident)?.to_str(self.src);
+        self.consume(TokenType::RParen)?;
+
+        Ok(parse)
+    }
+
     fn expect(&mut self, ttypes: &[TokenType]) -> Error {
         let what: Vec<&str> = ttypes.iter().map(|t| t.as_str()).collect();
         self.expect_str(&what)
@@ -1882,7 +1901,8 @@ fn to_requirement(s: &str) -> Requirement {
 #[derive(Debug)]
 pub struct Parse<'a> {
     pub what: ParsingWhat,          // What was parsed by this result.
-    pub name: &'a str,              // Name of a domain.
+    pub name: &'a str,              // Name of domain.
+    pub problem: &'a str,           // Name of problem.
     pub reqs: Reqs,                 // Requirements of the domain represented as bit vector.
     pub types: Types,               // Types extracted from the domain.
     pub const_pos: usize, // Token position within the PDDL source where constants are located.
@@ -1903,6 +1923,7 @@ impl<'a> Default for Parse<'a> {
         Parse {
             what: ParsingWhat::Any,
             name: "",
+            problem: "",
             reqs: Reqs::default(),
             types: Types::default(),
             const_pos: 0,
