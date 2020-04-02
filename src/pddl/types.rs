@@ -89,38 +89,7 @@ impl Types {
 
     /// `has_circular_types` returns true if `id` ends up inheriting from itself.
     pub fn has_circular_types(&self, id: TypeId) -> bool {
-        let pt = &self.parents[id];
-        if pt.contains(&id) {
-            true
-        } else {
-            for &pid in pt.iter() {
-                if self.check_circular_parent(id, pid, pt) {
-                    return true;
-                }
-            }
-            false
-        }
-    }
-
-    /// `check_circular_parent` is a helper function for `has_circular_types`.
-    /// `original` should be the first `TypeSet` that was checked in
-    /// `has_circular_types` and is needed when a child doesn't have a circular
-    /// reference but one of its parents has a circular reference of there
-    /// own.
-    fn check_circular_parent(&self, child: TypeId, parent: TypeId, original: &TypeSet) -> bool {
-        let pt = &self.parents[parent];
-        if pt == original {
-            false
-        } else if pt.contains(&child) {
-            true
-        } else {
-            for &pid in pt.iter() {
-                if self.check_circular_parent(child, pid, original) {
-                    return true;
-                }
-            }
-            false
-        }
+        self.is_child_an_ancestor_of(id, id)
     }
 }
 
@@ -152,8 +121,11 @@ mod test {
 
         assert!(t.is_child_an_ancestor_of(bar, foo));
         assert!(t.is_child_an_ancestor_of(baz, foo));
+
         assert!(!t.is_child_an_ancestor_of(foo, bar));
         assert!(!t.is_child_an_ancestor_of(foo, baz));
+        assert!(!t.is_child_an_ancestor_of(bar, baz));
+        assert!(!t.is_child_an_ancestor_of(baz, bar));
     }
 
     #[test]
@@ -170,6 +142,7 @@ mod test {
         assert!(t.is_child_an_ancestor_of(bar, foo));
         assert!(t.is_child_an_ancestor_of(baz, bar));
         assert!(t.is_child_an_ancestor_of(baz, foo));
+
         assert!(!t.is_child_an_ancestor_of(foo, bar));
         assert!(!t.is_child_an_ancestor_of(foo, baz));
         assert!(!t.is_child_an_ancestor_of(bar, baz));
@@ -192,6 +165,7 @@ mod test {
         assert!(t.has_circular_types(foo));
         assert!(t.has_circular_types(bar));
         assert!(t.has_circular_types(baz));
+
         assert!(!t.has_circular_types(quux));
     }
 }
